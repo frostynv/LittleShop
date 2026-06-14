@@ -1,0 +1,7 @@
+## Interface: 120005
+## Version: 1.0.0
+## Title: Little Shop
+## Notes: Own your little work order shop!
+## Author: FroStyNeavus
+
+littleshop.lua
