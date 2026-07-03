@@ -4,4 +4,5 @@
 ## Notes: Own your little work order shop!
 ## Author: FroStyNeavus
 
+logger.lua
 littleshop.lua

@@ -11,16 +11,28 @@ SlashCmdList["ACTIVATE_LFC_PANEL"] = function()
     LFC_SERVICE.ToggleFrame()
 end
 
+APP_NAME = "LittleShop"
 LFC_SERVICE = {
+    -- Debug configuration
     -- Global Variables (member variables)
     WATCHLIST = {},
     MAINFRAME = nil,
-    ORDERFRAME = nil,                     -- This will hold the current orders detected in chat
-    SOUNDS = { LFC_DETECTED = 120,        -- Sound kit ID for raid warning sound (good for alerts)
+    ORDERFRAME = nil,              -- This will hold the current orders detected in chat
+    MANAGEFRAME = nil,
+    SOUNDS = { LFC_DETECTED = 120, -- Sound kit ID for raid warning sound (good for alerts)
     },
 
+
     ORDERS = {
+        -- Blizzard DataProvider (https://wowpedia.fandom.com/wiki/API_CreateDataProvider)
+        -- Encapsulated collection object used as controller for recycling scroll box list items
         DATA_PROVIDER_ORDERS = CreateDataProvider(),
+
+        Init = function()
+            LFC_SERVICE.ORDERS.ResetOrders()                               -- Clear any existing data
+            LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS = CreateDataProvider() -- Expose the data provider for external access if neede
+        end,
+
         GetOrder = function()
             return LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS:GetData()
         end,
@@ -47,8 +59,33 @@ LFC_SERVICE = {
             is_completed = true/false -- Whether the order has been marked as completed
         }
         ]]
-
     },
+
+    -- Ochestration Function - First function to be called when activate the addon
+    ActivateService = function()
+        LOGGER.CONSOLE.info("Activating Little Shop Service...")
+        -- Initialize the frame if it hasn't been created yet
+        if not LFC_SERVICE.MAINFRAME then
+            LFC_SERVICE.InitializeFrame()
+        end
+
+        LFC_SERVICE.InitializeWatchList() -- Populate the watchlist with the player's current profession recipes
+        LOGGER.CONSOLE.info("Craftable items list Initialized")
+
+
+        LOGGER.CONSOLE.info("Frame initalized with chat listener")
+    end,
+
+    ToggleFrame = function()
+        if not LFC_SERVICE.MAINFRAME then
+            LFC_SERVICE.InitializeFrame()
+        end
+        if LFC_SERVICE.MAINFRAME:IsShown() then
+            LFC_SERVICE.MAINFRAME:Hide()
+        else
+            LFC_SERVICE.MAINFRAME:Show()
+        end
+    end,
 
     InitializeFrame = function()
         -- Set titleString
@@ -92,7 +129,6 @@ LFC_SERVICE = {
         local scroll_box = CreateFrame("Frame", nil, LFC_SERVICE.ORDERFRAME, "WowScrollBoxList")
         scroll_box:SetPoint("TOPLEFT", LFC_SERVICE.ORDERFRAME, "TOPLEFT", 4, -10)
         scroll_box:SetPoint("BOTTOMRIGHT", LFC_SERVICE.ORDERFRAME, "BOTTOMRIGHT", -22, 0)
-        
 
         -- Element: Scroll Bar
         local scroll_bar = CreateFrame("EventFrame", nil, LFC_SERVICE.ORDERFRAME, "MinimalScrollBar")
@@ -124,44 +160,21 @@ LFC_SERVICE = {
             -- Update the button's text based on the element data (e.g., item link or message)
             button.text:SetText(element.item_link or element.message or "Unknown Order")
             button:SetScript("OnClick", function()
-                print("Order from " .. tostring(element.player) .. ": " .. tostring(element.item_link or element.message))
+                LOGGER.CONSOLE.info("Order from " ..
+                    tostring(element.player) .. ": " .. tostring(element.item_link or element.message))
             end)
         end)
         scroll_box:SetDataProvider(LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS, ScrollBoxConstants.RetainScrollPosition)
-    end,
-
-    InitializeWatchList = function()
-        -- This function can be expanded in the future to include more complex logic for populating the watchlist
-        LFC_SERVICE.WATCHLIST = LFC_SERVICE.ScanCraftableItems()
-    end,
-
-    -- API Functions
-    ToggleFrame = function()
-        if not LFC_SERVICE.MAINFRAME then
-            LFC_SERVICE.InitializeFrame()
-        end
-        if LFC_SERVICE.MAINFRAME:IsShown() then
-            LFC_SERVICE.MAINFRAME:Hide()
-        else
-            LFC_SERVICE.MAINFRAME:Show()
-        end
-    end,
-
-    ActivateService = function()
-        -- Initialize the frame if it hasn't been created yet
-        if not LFC_SERVICE.MAINFRAME then
-            LFC_SERVICE.InitializeFrame()
-        end
 
         LFC_SERVICE.MAINFRAME:RegisterEvent("CHAT_MSG_CHANNEL") -- Listens to Trade Chat (/2)
         LFC_SERVICE.MAINFRAME:RegisterEvent("CHAT_MSG_SAY")     -- Listens to normal /say (Great for testing!)
         LFC_SERVICE.MAINFRAME:SetScript("OnEvent", LFC_SERVICE.OnChatDetectedEvent)
-        LFC_SERVICE.InitializeWatchList()                       -- Populate the watchlist with the player's current profession recipes
     end,
+
 
     OnChatDetectedEvent = function(self, event, ...)
         local message, player_name, _, channel_name, whisper_name = ...
-        local is_lfc, has_item, item_id, has_link, item_link, is_learned = LFC_SERVICE.ScanChat(message) -- Pass the chat message to the ScanChat function for processing
+        local is_lfc, has_item, item_id, has_link, item_link, is_learned = LFC_SERVICE.ParseChat(message) -- Pass the chat message to the ScanChat function for processing
 
         if is_lfc and has_item and is_learned then
             -- Create a data object for the data provider
@@ -172,45 +185,16 @@ LFC_SERVICE = {
                 item_id = item_id,
                 item_link = item_link,
                 is_link = has_link,
-                is_learned = true,      -- Placeholder, update with actual logic
-                is_followed_up = false, -- Placeholder, update with actual logic
-                is_completed = false    -- Placeholder, update with actual logic
+                is_learned = true,                               -- Placeholder, update with actual logic
+                is_followed_up = false,                          -- Placeholder, update with actual logic
+                is_completed = false                             -- Placeholder, update with actual logic
             }
-            LFC_SERVICE.ORDERS.AddOrder(order_data)                                                  -- Add the order data to the provider
-            PlaySound(LFC_SERVICE.SOUNDS.LFC_DETECTED, "Master")                                     -- Play a sound to alert the user
+            LFC_SERVICE.ORDERS.AddOrder(order_data)              -- Add the order data to the provider
+            PlaySound(LFC_SERVICE.SOUNDS.LFC_DETECTED, "Master") -- Play a sound to alert the user
         end
     end,
 
-    ScanCraftableItems = function()
-        local items = {}
-        -- Fetch all recipe IDs available to the player
-        local recipeIDs = C_TradeSkillUI.GetAllRecipeIDs()
-        if not recipeIDs or #recipeIDs == 0 then
-            return
-        end
-
-        local count = 0
-        for index, recipeID in ipairs(recipeIDs) do
-            local recipeInfo = C_TradeSkillUI.GetRecipeInfo(recipeID)
-
-            -- Verify validity of the recipeInfo (varies by profession, expansion, and other personal factors)
-            if recipeInfo and recipeInfo.learned then
-                -- Extract itemID from the recipe's item link
-                local item_link = C_TradeSkillUI.GetRecipeItemLink(recipeID)
-                if item_link then
-                    local itemID = string.match(item_link, "item:(%d+)")
-                    if itemID ~= nil then
-                        -- Use itemID as key in map for O(1) lookup speed
-                        items[itemID] = item_link
-                        count = count + 1
-                    end
-                end
-            end
-        end
-        return items
-    end,
-
-    ScanChat = function(chat_text)
+    ParseChat = function(chat_text)
         -- Initialize variables
         local lower_chat_text = string.lower(chat_text)
         local has_lfc_keyword, has_link, has_item, is_learned = false, false, false, false
@@ -242,5 +226,48 @@ LFC_SERVICE = {
             end
         end
         return has_lfc_keyword, has_item, item_id, has_link, item_link, is_learned
-    end
+    end,
+
+
+    ScanCraftableItems = function()
+        local items = {}
+        -- Fetch all recipe IDs available to the player
+        local recipeIDs = C_TradeSkillUI.GetAllRecipeIDs()
+        if not recipeIDs or #recipeIDs == 0 then
+            LOGGER.CONSOLE.warn("No craftable recipes found for the player. Watchlist will be empty.")
+            return {}
+        end
+
+
+        local count = 0
+        for index, recipeID in ipairs(recipeIDs) do
+            local recipeInfo = C_TradeSkillUI.GetRecipeInfo(recipeID)
+
+            -- Verify validity of the recipeInfo (varies by profession, expansion, and other personal factors)
+            if recipeInfo and recipeInfo.learned then
+                -- Extract itemID from the recipe's item link
+                local item_link = C_TradeSkillUI.GetRecipeItemLink(recipeID)
+                if item_link then
+                    local itemID = string.match(item_link, "item:(%d+)")
+                    if itemID ~= nil then
+                        -- Use itemID as key in map for O(1) lookup speed
+                        items[itemID] = item_link
+                        count = count + 1
+                    end
+                end
+            end
+        end
+        LOGGER.CONSOLE.info("LS Found " .. count .. " craftable items for the player.")
+        return items
+    end,
+
+
+    InitializeWatchList = function()
+        -- This function can be expanded in the future to include more complex logic for populating the watchlist
+        LFC_SERVICE.WATCHLIST = LFC_SERVICE.ScanCraftableItems()
+    end,
 }
+
+
+-- Activate the service when the addon is loaded
+LFC_SERVICE.ActivateService()
