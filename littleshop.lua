@@ -5,14 +5,15 @@
 SLASH_ACTIVATE_LFC_DETECTION1 = "/littleshop"
 SLASH_ACTIVATE_LFC_PANEL1 = "/showshop"
 SlashCmdList["ACTIVATE_LFC_DETECTION"] = function()
-    LFC_SERVICE.ActivateService()
+    _LS_SELF.ActivateService()
 end
 SlashCmdList["ACTIVATE_LFC_PANEL"] = function()
-    LFC_SERVICE.ToggleFrame()
+    _LS_SELF.ToggleFrame()
 end
 
 APP_NAME = "LittleShop"
-LFC_SERVICE = {
+
+_LS_SELF = {
     -- Debug configuration
     -- Global Variables (member variables)
     WATCHLIST = {},
@@ -22,90 +23,143 @@ LFC_SERVICE = {
     SOUNDS = { LFC_DETECTED = 120, -- Sound kit ID for raid warning sound (good for alerts)
     },
 
-
+    --[[
+        ORDER MANAGEMENT SYSTEM
+    ]]
     ORDERS = {
-        -- Blizzard DataProvider (https://wowpedia.fandom.com/wiki/API_CreateDataProvider)
-        -- Encapsulated collection object used as controller for recycling scroll box list items
-        DATA_PROVIDER_ORDERS = CreateDataProvider(),
+        --[[
+            External API:
+        ]]
+        ORDER_STATE = {
+            NONDECISIVE = -3, -- Not sure if it's an craftable order
+            UNLEARNED = -2,   -- Unlearned
+            HIDDEN = -1,      -- Special usage state
+            COMPLETE = 0,     -- Order has been completed
+            PENDING = 1,      -- Order that is detected but no whisper follow up
+            UNFULFILLED = 2,  -- Order that has been followed up but not completed
+            FULFILLED = 3,    -- Order that has been followed up and completed
+        },
 
-        Init = function()
-            LFC_SERVICE.ORDERS.ResetOrders()                               -- Clear any existing data
-            LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS = CreateDataProvider() -- Expose the data provider for external access if neede
+        -- Create a new empty order object based on the template
+        CreateOrderObject = function()
+            local order = {}
+
+            for key, value in pairs(_LS_SELF.ORDERS._DATA_TEMPLATE) do
+                order[key] = value
+            end
+            return order
         end,
 
-        GetOrder = function()
-            return LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS:GetData()
+        ParseItemIdFromLink = function(item_link)
+            if not item_link then
+                return nil
+            end
+            local item_id = string.match(item_link, "item:(%d+)")
+            return item_id
         end,
+
+        -- Wrapper methods for convenient access to scroll box service
         AddOrder = function(orderData)
-            LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS:Insert(orderData)
+            table.insert(_LS_SELF.ORDERS._data, orderData)
+            _LS_SELF.ORDERS._INT_SCROLL_BOX_SERVICE.AddOrder(orderData)
         end,
-        RemoveOrder = function(order)
-            LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS:RemoveByIndex(order.unique_id) -- Assuming unique_id is used as the index for simplicity
-        end,
-        ResetOrders = function()
-            LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS:Flush()
-        end
 
+        GetDataProvider = function()
+            return _LS_SELF.ORDERS._INT_SCROLL_BOX_SERVICE.GetProvider()
+        end,
 
         --[[
-            ORDER DATA STRUCTURE:{
-            unique_id = "A unique identifier for the order, could be a combination of player name and item ID or a timestamp",
+            Internal definition
+            ]]
+        _data = {},
+        _DATA_TEMPLATE = {
+            -- Player information
+            unique_id =
+            "A unique identifier for the order, could be a combination of player name and item ID or a timestamp",
             message = "Full chat message text",
-            player = "Name of the player who sent the message",
-            item_link = 12345 -- The ID of the item mentioned in the message (if any)
-            is_link = true/false -- Whether the message contains an item link
-            is_learned = true/false -- Whether the item is in the player's profession watchlist
-            is_followed_up = true/false -- Whether the user has already followed up on this order
-            is_completed = true/false -- Whether the order has been marked as completed
-        }
+            player = {
+                name = "player_name",
+                guid = "player_guid",
+                realm = "player_realm"
+            },
+            -- Item information
+            item_link = "item_link", -- The ID of the item mentioned in the message (if any)
+            -- Order information
+            order_state = "the state of the order (e.g., pending, fulfilled, etc.)",
+            timestamp = "the time when the order was detected",
+            -- Flags for additional information
+            flags = {
+                is_lfc = false,     -- Whether the message contains an LFC keyword
+                is_learned = false, -- Whether the player has learned the recipe for the item
+            }
+        },
+
+        --[[
+            External Dependencies:
         ]]
+        _INT_SCROLL_BOX_SERVICE = {
+            DATA_PROVIDER = CreateDataProvider(),
+            -- This will be used to populate the scroll box with orders
+
+            AddOrder = function(orderData)
+                _LS_SELF.ORDERS._INT_SCROLL_BOX_SERVICE.DATA_PROVIDER:Insert(orderData)
+            end,
+            RemoveOrder = function(order)
+                _LS_SELF.ORDERS._INT_SCROLL_BOX_SERVICE.DATA_PROVIDER:RemoveByIndex(order.unique_id) -- Assuming unique_id is used as the index for simplicity
+            end,
+            ResetOrders = function()
+                _LS_SELF.ORDERS._INT_SCROLL_BOX_SERVICE.DATA_PROVIDER:Flush()
+            end,
+
+            GetProvider = function()
+                return _LS_SELF.ORDERS._INT_SCROLL_BOX_SERVICE.DATA_PROVIDER
+            end
+        }
     },
 
     -- Ochestration Function - First function to be called when activate the addon
     ActivateService = function()
         LOGGER.CONSOLE.info("Activating Little Shop Service...")
         -- Initialize the frame if it hasn't been created yet
-        if not LFC_SERVICE.MAINFRAME then
-            LFC_SERVICE.InitializeFrame()
+        if not _LS_SELF.MAINFRAME then
+            _LS_SELF.InitializeFrame()
         end
 
-        LFC_SERVICE.InitializeWatchList() -- Populate the watchlist with the player's current profession recipes
-        LOGGER.CONSOLE.info("Craftable items list Initialized")
-
-
-        LOGGER.CONSOLE.info("Frame initalized with chat listener")
+        _LS_SELF.InitializeWatchList() -- Populate the watchlist with the player's current profession recipes
+        LOGGER.CONSOLE.info("Initializing watchlist with " .. tostring(#_LS_SELF.WATCHLIST) .. " craftable items.")
+        LOGGER.CONSOLE.info("Little Shop Service Activated. Use /showshop to toggle the order board.")
     end,
 
     ToggleFrame = function()
-        if not LFC_SERVICE.MAINFRAME then
-            LFC_SERVICE.InitializeFrame()
+        if not _LS_SELF.MAINFRAME then
+            _LS_SELF.InitializeFrame()
         end
-        if LFC_SERVICE.MAINFRAME:IsShown() then
-            LFC_SERVICE.MAINFRAME:Hide()
+        if _LS_SELF.MAINFRAME:IsShown() then
+            _LS_SELF.MAINFRAME:Hide()
         else
-            LFC_SERVICE.MAINFRAME:Show()
+            _LS_SELF.MAINFRAME:Show()
         end
     end,
 
     InitializeFrame = function()
         -- Set titleString
-        LFC_SERVICE.MAINFRAME = CreateFrame("Frame", "LFC_Main_Frame", UIParent, "BasicFrameTemplate")
-        LFC_SERVICE.MAINFRAME.TitleText:SetText("Little Shop - Your Order Board")
-        LFC_SERVICE.MAINFRAME:SetSize(700, 400)
-        LFC_SERVICE.MAINFRAME:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        _LS_SELF.MAINFRAME = CreateFrame("Frame", "LFC_Main_Frame", UIParent, "BasicFrameTemplate")
+        _LS_SELF.MAINFRAME.TitleText:SetText("Little Shop - Your Order Board")
+        _LS_SELF.MAINFRAME:SetSize(700, 400)
+        _LS_SELF.MAINFRAME:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 
-        LFC_SERVICE.MAINFRAME:SetMovable(true)
-        LFC_SERVICE.MAINFRAME:EnableMouse(true)
-        LFC_SERVICE.MAINFRAME:RegisterForDrag("LeftButton")
-        LFC_SERVICE.MAINFRAME:SetScript("OnDragStart", LFC_SERVICE.MAINFRAME.StartMoving)
-        LFC_SERVICE.MAINFRAME:SetScript("OnDragStop", LFC_SERVICE.MAINFRAME.StopMovingOrSizing)
+        _LS_SELF.MAINFRAME:SetMovable(true)
+        _LS_SELF.MAINFRAME:EnableMouse(true)
+        _LS_SELF.MAINFRAME:RegisterForDrag("LeftButton")
+        _LS_SELF.MAINFRAME:SetScript("OnDragStart", _LS_SELF.MAINFRAME.StartMoving)
+        _LS_SELF.MAINFRAME:SetScript("OnDragStop", _LS_SELF.MAINFRAME.StopMovingOrSizing)
 
-        LFC_SERVICE.ORDERFRAME = CreateFrame("Frame", "LFC_Order_Frame", LFC_SERVICE.MAINFRAME, "BackdropTemplate")
-        LFC_SERVICE.ORDERFRAME:SetSize(400, 300)
-        LFC_SERVICE.ORDERFRAME:SetPoint("TOPLEFT", LFC_SERVICE.MAINFRAME, "TOPLEFT", 10, -30)
+        _LS_SELF.ORDERFRAME = CreateFrame("Frame", "LFC_Order_Frame", _LS_SELF.MAINFRAME, "BackdropTemplate")
+        _LS_SELF.ORDERFRAME:SetSize(400, 300)
+        _LS_SELF.ORDERFRAME:SetPoint("TOPLEFT", _LS_SELF.MAINFRAME, "TOPLEFT", 10, -30)
 
         -- ORDERFRAME BACKDROP
-        LFC_SERVICE.ORDERFRAME:SetBackdrop({
+        _LS_SELF.ORDERFRAME:SetBackdrop({
             -- Background texture (a solid white square we can color later)
             bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
 
@@ -121,24 +175,73 @@ LFC_SERVICE = {
 
         -- Set the Colors (Red, Green, Blue, Alpha)
         -- Black background, 50% opaque
-        LFC_SERVICE.ORDERFRAME:SetBackdropColor(0, 0, 0, 0.5)
+        _LS_SELF.ORDERFRAME:SetBackdropColor(0, 0, 0, 0.5)
         -- Gold border, 50% opaque
-        LFC_SERVICE.ORDERFRAME:SetBackdropBorderColor(1, 0.8, 0, 0.5)
+        _LS_SELF.ORDERFRAME:SetBackdropBorderColor(1, 0.8, 0, 0.5)
+
+        _LS_SELF.MANAGEFRAME = CreateFrame("Frame", "LFC_Manage_Frame", _LS_SELF.MAINFRAME)
+        LOGGER.CONSOLE.info("Creating Manage Frame...")
+        _LS_SELF.MANAGEFRAME:SetSize(250, 300)
+        _LS_SELF.MANAGEFRAME:SetPoint("TOPRIGHT", _LS_SELF.MAINFRAME, "TOPRIGHT", -10, -30)
+
+        -- LFC_SERVICE.MANAGEFRAME:SetBackdrop({
+        --     -- Background texture (a solid white square we can color later)
+        --     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+
+        --     -- Border texture (The classic WoW tooltip border)
+        --     edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+
+        --     -- How thick the border is in pixels
+        --     edgeSize = 16,
+
+        --     -- How far the background shrinks inward so it doesn't overlap the border
+        --     insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        -- })
+
+        -- -- Set the Colors (Red, Green, Blue, Alpha)
+        -- -- Black background, 50% opaque
+        -- LFC_SERVICE.MANAGEFRAME:SetBackdropColor(0, 0, 0, 0.0)
+        -- -- Gold border, 50% opaque
+        -- LFC_SERVICE.MANAGEFRAME:SetBackdropBorderColor(1, 0.8, 0, 0.5)
+
+        -- 2. Define grid properties
+        local ROWS = 3
+        local COLS = 3
+        local BUTTON_SIZE = 40
+        local SPACING = 10
+
+        -- 3. Loop to generate and position the grid elements
+        for row = 1, ROWS do
+            for col = 1, COLS do
+                -- Create a button inside the grid container
+                local btn = CreateFrame("Button", nil, _LS_SELF.MANAGEFRAME, "UIPanelButtonTemplate")
+                btn:SetSize(BUTTON_SIZE, BUTTON_SIZE)
+                btn:SetText(row .. "," .. col)
+
+                -- Calculate math offsets from the top-left corner of the container
+                local xOffset = (col - 1) * (BUTTON_SIZE + SPACING) + SPACING
+                local yOffset = -(row - 1) * (BUTTON_SIZE + SPACING) - SPACING
+
+                -- Anchor the button visually
+                btn:SetPoint("TOPLEFT", _LS_SELF.MANAGEFRAME, "TOPLEFT", xOffset, yOffset)
+            end
+        end
+
 
         -- Element: Scroll Box List
-        local scroll_box = CreateFrame("Frame", nil, LFC_SERVICE.ORDERFRAME, "WowScrollBoxList")
-        scroll_box:SetPoint("TOPLEFT", LFC_SERVICE.ORDERFRAME, "TOPLEFT", 4, -10)
-        scroll_box:SetPoint("BOTTOMRIGHT", LFC_SERVICE.ORDERFRAME, "BOTTOMRIGHT", -22, 0)
+        local scroll_box = CreateFrame("Frame", nil, _LS_SELF.ORDERFRAME, "WowScrollBoxList")
+        scroll_box:SetPoint("TOPLEFT", _LS_SELF.ORDERFRAME, "TOPLEFT", 4, -10)
+        scroll_box:SetPoint("BOTTOMRIGHT", _LS_SELF.ORDERFRAME, "BOTTOMRIGHT", -22, 0)
 
         -- Element: Scroll Bar
-        local scroll_bar = CreateFrame("EventFrame", nil, LFC_SERVICE.ORDERFRAME, "MinimalScrollBar")
+        local scroll_bar = CreateFrame("EventFrame", nil, _LS_SELF.ORDERFRAME, "MinimalScrollBar")
         scroll_bar:SetPoint("TOPLEFT", scroll_box, "TOPRIGHT", 4, 0)
         scroll_bar:SetPoint("BOTTOMLEFT", scroll_box, "BOTTOMRIGHT", 4, 10)
 
         -- Element: Scroll Box List View
         local itemSpacing = 2
         local view = CreateScrollBoxListLinearView(itemSpacing, itemSpacing, itemSpacing, itemSpacing, itemSpacing)
-        view:SetElementExtent(20)
+        view:SetElementExtent(20) -- WARNING: This is required to set the height of each row. Crash will occur if not defined.
         scroll_box:SetView(view)
         ScrollUtil.InitScrollBoxListWithScrollBar(scroll_box, scroll_bar, view)
 
@@ -158,74 +261,79 @@ LFC_SERVICE = {
                 button:SetSize(250, 20) -- Set the size of each row
             end
             -- Update the button's text based on the element data (e.g., item link or message)
-            button.text:SetText(element.item_link or element.message or "Unknown Order")
+            local timeData = element.timestamp
+            button.text:SetText("[" .. string.format("%02d:%02d", timeData.hour, timeData.min) .. "] [" .. (element.player.name or "N/A") .. "] " .. (element.item_link or element.message))
+
+
             button:SetScript("OnClick", function()
-                LOGGER.CONSOLE.info("Order from " ..
-                    tostring(element.player) .. ": " .. tostring(element.item_link or element.message))
+                LOGGER.CONSOLE.list({
+                    "Order Details:",
+                    "Unique ID: " .. tostring(element.unique_id),
+                    "Player: " .. tostring(element.player.name) .. " (" .. tostring(element.player.realm or "") .. ")",
+                    "Item Link: " .. tostring(element.item_link),
+                    "Message: " .. tostring(element.message),
+                    "State: " .. tostring(element.state),
+                    "Timestamp: " .. string.format("%02d:%02d:%02d", timeData.hour, timeData.min, timeData.sec),
+                    "Flags: is_lfc=" .. tostring(element.flags.is_lfc) .. ", is_learned=" .. tostring(element.flags.is_learned)
+                })
             end)
         end)
-        scroll_box:SetDataProvider(LFC_SERVICE.ORDERS.DATA_PROVIDER_ORDERS, ScrollBoxConstants.RetainScrollPosition)
+        scroll_box:SetDataProvider(_LS_SELF.ORDERS.GetDataProvider(), ScrollBoxConstants.RetainScrollPosition)
 
-        LFC_SERVICE.MAINFRAME:RegisterEvent("CHAT_MSG_CHANNEL") -- Listens to Trade Chat (/2)
-        LFC_SERVICE.MAINFRAME:RegisterEvent("CHAT_MSG_SAY")     -- Listens to normal /say (Great for testing!)
-        LFC_SERVICE.MAINFRAME:SetScript("OnEvent", LFC_SERVICE.OnChatDetectedEvent)
+        _LS_SELF.MAINFRAME:RegisterEvent("CHAT_MSG_CHANNEL") -- Listens to Trade Chat and other channels (Great for production!)
+        _LS_SELF.MAINFRAME:RegisterEvent("CHAT_MSG_SAY")     -- Listens to normal /say (Great for testing!)
+        _LS_SELF.MAINFRAME:SetScript("OnEvent", _LS_SELF.OnChatDetectedEvent)
     end,
 
-
+    --[[
+        Event Handler for Chat Detection
+        Doc:
+            https://warcraft.wiki.gg/wiki/CHAT_MSG_SAY
+            https://warcraft.wiki.gg/wiki/CHAT_MSG_CHANNEL
+        ]]
+    KEYWORDS = { "lfc", "lfm", "looking for", "lf", "craft" }, -- Expandable list of keywords to detect LFC messages
     OnChatDetectedEvent = function(self, event, ...)
-        local message, player_name, _, channel_name, whisper_name = ...
-        local is_lfc, has_item, item_id, has_link, item_link, is_learned = LFC_SERVICE.ParseChat(message) -- Pass the chat message to the ScanChat function for processing
+        local message, _, _, _, _, _, _, _, channel_name, _, _, guid = ...
+        local timestamp = date("*t") -- Capture the timestamp when the message is detected
 
-        if is_lfc and has_item and is_learned then
-            -- Create a data object for the data provider
-            local order_data = {
-                unique_id = player_name .. "_" .. item_id .. "_" .. time(), -- Example unique ID
-                message = message,
-                player = player_name,
-                item_id = item_id,
-                item_link = item_link,
-                is_link = has_link,
-                is_learned = true,                               -- Placeholder, update with actual logic
-                is_followed_up = false,                          -- Placeholder, update with actual logic
-                is_completed = false                             -- Placeholder, update with actual logic
-            }
-            LFC_SERVICE.ORDERS.AddOrder(order_data)              -- Add the order data to the provider
-            PlaySound(LFC_SERVICE.SOUNDS.LFC_DETECTED, "Master") -- Play a sound to alert the user
-        end
-    end,
-
-    ParseChat = function(chat_text)
-        -- Initialize variables
-        local lower_chat_text = string.lower(chat_text)
-        local has_lfc_keyword, has_link, has_item, is_learned = false, false, false, false
+        -- Caching player information
+        local _, _, _, _, _, player_name, player_realm = GetPlayerInfoByGUID(guid)
 
         -- Scan for LFC keywords (this can be expanded in the future to include more variations and languages)
-        if string.match(lower_chat_text, "lfc") then
-            has_lfc_keyword = true
+        local lower_chat_text = string.lower(message)
+        local has_lfc_keyword = false -- Pass the chat message to the ScanChat function for processing
+        for _, keyword in ipairs(_LS_SELF.KEYWORDS) do
+            if string.match(lower_chat_text, keyword) then
+                has_lfc_keyword = true
+                break
+            end
         end
-
         -- Scan for item links
         -- WoW item link format: |cnIQx|Hitem:payload|h[text]|h|r
         -- where x is Enum.ItemQuality (can be numeric or other formats)
-        local item_link = string.match(chat_text, "|cnIQ[^|]+|H[^|]+|h.-%|h|r")
-        local item_id = nil
-
+        local item_link = string.match(message, "|cnIQ[^|]+|H[^|]+|h.-%|h|r")
+        
+        -- Create a data object for the data provider
+        local order = _LS_SELF.ORDERS.CreateOrderObject() -- Ensure the data provider is initialized
+        order.unique_id = guid .. "_" .. timestamp.day .. timestamp.hour .. timestamp.min .. timestamp.sec     -- Example unique ID
+        order.message = message
+        order.player = {
+            name = player_name,
+            realm = player_realm,
+            guid = guid
+        }
+        order.item_link = item_link
+        order.state = _LS_SELF.ORDERS.ORDER_STATE.PENDING -- Default state for new orders
+        order.timestamp = timestamp                          -- The time when the order was detected
+        order.flags = {
+            is_lfc = has_lfc_keyword,
+            is_learned = item_link and _LS_SELF.WATCHLIST[_LS_SELF.ORDERS.ParseItemIdFromLink(item_link)] ~= nil
+        }
         if item_link then
-            -- Now extract just the item ID from the full link for the watchlist lookup
-            has_link = true
-            item_id = string.match(item_link, "item:(%d+)")
-            if item_id then
-                has_item = true
-            end
+            _LS_SELF.ORDERS.AddOrder(order) -- Add the order data to the provider
+            LOGGER.CONSOLE.info("New order from " .. tostring(guid) .. ": " .. tostring(item_link))
+            PlaySound(_LS_SELF.SOUNDS.LFC_DETECTED) -- Play a sound when a new order is detected
         end
-        -- Crosscheck with watchlist
-        if item_link or item_id then
-            -- Direct map lookup O(1) instead of iterating through array O(n)
-            if LFC_SERVICE.WATCHLIST[item_id] then
-                is_learned = true
-            end
-        end
-        return has_lfc_keyword, has_item, item_id, has_link, item_link, is_learned
     end,
 
 
@@ -238,9 +346,8 @@ LFC_SERVICE = {
             return {}
         end
 
-
         local count = 0
-        for index, recipeID in ipairs(recipeIDs) do
+        for _, recipeID in ipairs(recipeIDs) do
             local recipeInfo = C_TradeSkillUI.GetRecipeInfo(recipeID)
 
             -- Verify validity of the recipeInfo (varies by profession, expansion, and other personal factors)
@@ -264,10 +371,10 @@ LFC_SERVICE = {
 
     InitializeWatchList = function()
         -- This function can be expanded in the future to include more complex logic for populating the watchlist
-        LFC_SERVICE.WATCHLIST = LFC_SERVICE.ScanCraftableItems()
+        _LS_SELF.WATCHLIST = _LS_SELF.ScanCraftableItems()
     end,
 }
 
 
 -- Activate the service when the addon is loaded
-LFC_SERVICE.ActivateService()
+_LS_SELF.ActivateService()

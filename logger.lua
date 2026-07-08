@@ -1,5 +1,8 @@
 -- Color Constants (WoW color code format: |cFFRRGGBB text |r)
 
+-- @type table APP_NAME_LOG
+-- @field APP_NAME_LOG string The name of the application for logging purposes.
+APP_NAME = APP_NAME or {}
 
 LOGGER = {
     COLORS = {
@@ -30,7 +33,17 @@ LOGGER = {
             print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.YELLOW .. " " .. message)
         end,
         info = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.BLUE .. " " .. message)
+            print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.BLUE .. " " .. tostring(message) .. LOGGER.COLORS.RESET)
+        end,
+        list = function(items)
+            if not items or #items == 0 then return end
+            for i, item in ipairs(items) do
+                if i == 1 then
+                    print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.RESET .. " | " .. tostring(item))
+                else
+                    print(" | " .. tostring(item))
+                end
+            end
         end,
     },
 }
