@@ -38,6 +38,8 @@ function Order:new(unique_id, message, player_name, player_realm, guid, item_lin
     return instance
 end
 
+
+
 local LittleShopPersistence = {}
 LittleShopPersistence.__index = LittleShopPersistence
 LittleShopPersistence.SAVED_VARIABLES = {
