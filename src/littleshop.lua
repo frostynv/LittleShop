@@ -1,93 +1,117 @@
 -- LittleShop Addon
 APP_NAME = "LittleShop"
+-- Order and Item classes are defined in order.lua, loaded before this file.
+
+-- Capture class references from global scope (exported by order.lua and item.lua)
+-- to avoid repeated global lookups while keeping namespace pollution minimal
+local Order = _G.Order
+local Craft = _G.Craft
 
 
 -- ============================================================
--- Order Class
+-- Persistence Class
 -- ============================================================
-local Order = {}
-Order.__index = Order
-
--- Static class variables
-Order.ORDER_STATE = {
-    NONDECISIVE = -3, -- Not sure if it's a craftable order
-    UNLEARNED = -2,   -- Unlearned
-    HIDDEN = -1,      -- Special usage state
-    COMPLETE = 0,     -- Order has been completed
-    PENDING = 1,      -- Order that is detected but no whisper follow up
-    UNFULFILLED = 2,  -- Order that has been followed up but not completed
-    FULFILLED = 3,    -- Order that has been followed up and completed
-}
-
-function Order:new(unique_id, message, player_name, player_realm, guid, item_link, state, timestamp, flags)
-    local instance = setmetatable({}, Order)
-    instance.unique_id = unique_id
-    instance.message = message
-    instance.player = {
-        name = player_name,
-        realm = player_realm,
-        guid = guid
-    }
-    instance.item_link = item_link
-    instance.state = state or Order.ORDER_STATE.PENDING
-    instance.timestamp = timestamp
-    instance.flags = flags or {
-        is_lfc = false,
-        is_learned = false
-    }
-    return instance
-end
-
-
-
-local LittleShopPersistence = {}
-LittleShopPersistence.__index = LittleShopPersistence
-LittleShopPersistence.SAVED_VARIABLES = {
-    ORDERS = {},
-    WATCHLIST = {}
-}
-
--- @type table
-LittleShopSavedVariables = LittleShopSavedVariables or {}
-
+local Persistence = {}
+Persistence.__index = Persistence
 
 -- Mimic profile behavior by instancing the persistence class. This allows for future expansion to support multiple profiles.
-function LittleShopPersistence:new()
-    local instance = setmetatable({}, LittleShopPersistence)
-    instance.profile_settings = {}
+function Persistence:New()
+    local instance = setmetatable({}, Persistence)
+    instance.profile_settings = {}   -- Profile settings for the current user
+    instance.learned_crafts = {}     -- Map of learned items keyed by itemID: itemID -> craft object
+    instance.orders = {}
+    instance.current_character = nil -- Initialize crafter tracking
     return instance
 end
 
-function LittleShopPersistence:AddOrder(order)
-    table.insert(self.SAVED_VARIABLES.ORDERS, order)
+function Persistence:Init()
+    -- Load saved variables from the global scope (LittleShopSavedVariables)
+    if not LittleShopSavedVariables then
+        LittleShopSavedVariables = {}
+    end
+    self.profile_settings = LittleShopSavedVariables.profile or {}
+    self.learned_crafts = LittleShopSavedVariables.learned_crafts or {}
+    self.orders = LittleShopSavedVariables.orders or {}
 end
 
-function LittleShopPersistence:GetOrder(order)
-    return self.SAVED_VARIABLES.ORDERS[order.unique_id]
+function Persistence:CurrentCrafter()
+    return self.current_character
 end
+
+function Persistence:SetCurrentCrafter(character)
+    self.current_character = character
+end
+
+function Persistence:CurrentProfile()
+    return self.profile_settings
+end
+
+function Persistence:AddOrder(order)
+    self.orders[order.unique_id] = order
+end
+
+function Persistence:GetOrder(order)
+    return self.orders[order.unique_id]
+end
+
+function Persistence:RemoveOrder(order)
+    self.orders[order.unique_id] = nil
+end
+
+function Persistence:ResetOrders()
+    self.orders = {}
+end
+
+function Persistence:AddCraftableItem(craft)
+    self.learned_crafts[craft.item_id] = craft
+end
+
+function Persistence:RemoveCraftableItem    (craft)
+    self.learned_crafts[craft.item_id] = nil
+end
+
+function Persistence:SetCraftableItem(craft)
+    self.learned_crafts[craft.item_id] = craft
+end
+
+function Persistence:MergeLearnedCrafts(new_crafts)
+    for item_id, new_craft in pairs(new_crafts) do
+        if self.learned_crafts[item_id] then
+            self.learned_crafts[item_id]:AddCrafter(new_craft.crafter) -- Merge crafters if the item already exists
+        else
+            -- New item, just add it
+            self.learned_crafts[item_id] = new_craft
+        end
+    end
+end
+
+
 
 -- ==============================================================
+-- Character Class
+-- ==============================================================
 
-local LittleShopItem = {}
-LittleShopItem.__index = LittleShopItem
+local Character = {}
+Character.__index = Character
 
-function LittleShopItem:new(item_id, item_link, crafter, profession)
-    local instance = setmetatable({}, LittleShopItem)
-    instance.item_id = item_id
-    instance.item_link = item_link
-    instance.crafter = crafter       -- Optional
-    instance.profession = profession -- Optional
-    return instance
-end
-
-local LittleShopCharacter = {}
-LittleShopCharacter.__index = LittleShopCharacter
-
-function LittleShopCharacter:new(name, realm, guid)
-    local instance = setmetatable({}, LittleShopCharacter)
+function Character:New(name, realm, guid)
+    local instance = setmetatable({}, Character)
     instance.name = name
     instance.realm = realm
     instance.guid = guid
+    return instance
+end
+
+-- ==============================================================
+-- Crafter Class
+-- ==============================================================
+local Crafter = {}
+Crafter.__index = Crafter
+
+function Crafter:New(character, profession)
+    local instance = Character:New(character.name, character.realm, character.guid)
+    setmetatable(instance, Crafter)
+    instance.profession = profession
     return instance
 end
 
@@ -98,41 +122,50 @@ local LittleShop = {}
 LittleShop.__index = LittleShop
 
 -- Static class variables
-
 LittleShop.SOUNDS = {
     LFC_DETECTED = 120 -- Sound kit ID for raid warning sound (good for alerts)
 }
 LittleShop.KEYWORDS = { "lfc", "lfm", "looking for", "lf", "craft" }
 
-
-LittleShop.Persistence = LittleShopPersistence:new()
-
-
-function LittleShop:new()
+function LittleShop:New()
     local instance = setmetatable({}, LittleShop)
-    instance.watchlist = {}
+    instance.is_active = false
+    instance.persistence = Persistence:New()
+
+    -- TODO: Setup the profile loading and saving mechanism for the addon. This will allow users to have different profiles for different characters or playstyles.
     instance.main_frame = nil
     instance.order_frame = nil
+    instance._order_provider = CreateDataProvider()
     instance.manage_frame = nil
     instance.profile_frame = nil
-    instance.orders = {
-        _data = {},
-        _data_provider = CreateDataProvider(),
-        AddOrder = function(orderData)
-            table.insert(instance.orders._data, orderData)
-            instance.orders._data_provider:Insert(orderData)
-        end,
-        RemoveOrder = function(order)
-            instance.orders._data_provider:RemoveByIndex(order.unique_id)
-        end,
-        ResetOrders = function()
-            instance.orders._data_provider:Flush()
-        end,
-        GetProvider = function()
-            return instance.orders._data_provider
-        end
-    }
     return instance
+end
+
+function LittleShop:AddOrder(orderData)
+    self.persistence:AddOrder(orderData)
+    self._order_provider:Insert(orderData)
+end
+
+function LittleShop:RemoveOrder(order)
+    self.persistence:RemoveOrder(order)
+    self._order_provider:RemoveByIndex(order.unique_id)
+end
+
+function LittleShop:ResetOrders()
+    self.persistence:ResetOrders()
+    self._order_provider:Flush()
+end
+
+function LittleShop:GetProvider()
+    return self._order_provider
+end
+
+function LittleShop:IsActive()
+    return self.is_active
+end
+
+function LittleShop:Persistence()
+    return self.persistence
 end
 
 function LittleShop:ParseItemIdFromLink(item_link)
@@ -147,8 +180,16 @@ function LittleShop:ActivateService()
         self.main_frame:SetScript("OnLoad", function()
         end)
     end
-    self:InitializeWatchList()
+    self.persistence:Init()
+    self.learned_crafts = self:ScanCraftableItems()
+    self.is_active = true
     LOGGER.CONSOLE.info("Little Shop Service Activated. Use /showshop to toggle the order board.")
+end
+
+function LittleShop:DeactivateService()
+    LOGGER.CONSOLE.info("Deactivating Little Shop Service...")
+    self.is_active = false
+    LOGGER.CONSOLE.info("Little Shop Service Deactivated.")
 end
 
 function LittleShop:ToggleShow()
@@ -169,7 +210,7 @@ function LittleShop:InitializeFrame()
         if not LittleShopSavedVariables then
             LittleShopSavedVariables = {}
         end
-        self.Persistence.SAVED_VARIABLES = LittleShopSavedVariables
+        -- self.Persistence.SAVED_VARIABLES = LittleShopSavedVariables
     end)
 
 
@@ -270,7 +311,7 @@ function LittleShop:InitializeFrame()
         end)
     end)
 
-    scroll_box:SetDataProvider(self.orders.GetProvider(), ScrollBoxConstants.RetainScrollPosition)
+    scroll_box:SetDataProvider(self._order_provider, ScrollBoxConstants.RetainScrollPosition)
 
     self.main_frame:RegisterEvent("CHAT_MSG_CHANNEL") -- Listens to Trade Chat and other channels (Great for production!)
     self.main_frame:RegisterEvent("CHAT_MSG_SAY")     -- Listens to normal /say (Great for testing!)
@@ -307,71 +348,100 @@ function LittleShop:OnChatDetectedEvent(event, ...)
 
     if item_link then
         local unique_id = guid .. "_" .. timestamp.day .. timestamp.hour .. timestamp.min .. timestamp.sec
-        local order = Order:new(unique_id, message, player_name, player_realm, guid, item_link,
-            Order.ORDER_STATE.PENDING, timestamp, {
+        local item_id = self:ParseItemIdFromLink(item_link)
+        local is_item_learned = self.learned_crafts and self.learned_crafts[item_id] ~= nil
+        
+        local order = Order:New(unique_id, message, player_name, player_realm, guid, item_link,
+            nil, timestamp, {
                 is_lfc = has_lfc_keyword,
-                is_learned = self.watchlist[self:ParseItemIdFromLink(item_link)] ~= nil
+                is_learned = is_item_learned
             })
+        
+        if is_item_learned then
+            order.state = Order.ORDER_STATE.PENDING
+        else
+            order.state = Order.ORDER_STATE.UNLEARNED
+        end
 
-        self.orders.AddOrder(order)
-        LOGGER.CONSOLE.info("New order from " .. tostring(guid) .. ": " .. tostring(item_link))
+        self:AddOrder(order)
+        LOGGER.CONSOLE.info("New order from " .. player_realm .. "-" .. player_name .. ": " .. tostring(item_link))
         PlaySound(self.SOUNDS.LFC_DETECTED)
     end
 end
 
 function LittleShop:ScanCraftableItems()
     -- Load the player's professions and open the corresponding trade C_TradeSkillUI
-
-    local items = {}
+    -- Use Item class for encapsulation of item data (item_id, item_link, crafter, profession)
+    local learned_crafts = {}
+    -- Info: We can only get the list of craftable recipes, althought LFC will call for items.
     local recipeIDs = C_TradeSkillUI.GetAllRecipeIDs()
     if not recipeIDs or #recipeIDs == 0 then
-        LOGGER.CONSOLE.warn("No craftable recipes found for the player. Watchlist will be empty.")
+        LOGGER.CONSOLE.warn("No craftable recipes found for the player. Learned crafts will be empty.")
         return {}
     end
 
     local count = 0
     for _, recipeID in ipairs(recipeIDs) do
         local recipeInfo = C_TradeSkillUI.GetRecipeInfo(recipeID)
+        -- Case: include only learned recipes (craftable items).
         if recipeInfo and recipeInfo.learned then
+            -- Fetch item information
+            --     Fetch profession information for the recipe
+            --     Fetch item link for the recipe
+            -- https://warcraft.wiki.gg/wiki/API_C_TradeSkillUI.GetProfessionInfoByRecipeID
             local item_link = C_TradeSkillUI.GetRecipeItemLink(recipeID)
             if item_link then
+                -- Info: We decided on itemid as the key for tables + encapsulating identifier for a craftable recipe
                 local itemID = string.match(item_link, "item:(%d+)")
+                -- Case: Corruption of data or edge cases
                 if itemID ~= nil then
-                    items[itemID] = item_link
+                    local craft = Craft:New(itemID, item_link, { [self:Persistence():CurrentCrafter().name] = true }, recipeID)
+                    learned_crafts[itemID] = craft
                     count = count + 1
                 end
             end
         end
     end
-    LOGGER.CONSOLE.info("LS Found " .. count .. " craftable items for the player.")
-    return items
-end
-
-function LittleShop:InitializeWatchList()
-    self.watchlist = self:ScanCraftableItems()
+    LOGGER.CONSOLE.info("LittleShop found " ..
+        count ..
+        " craftable items for " ..
+        self:Persistence():CurrentCrafter().name .. " on realm " .. self:Persistence():CurrentCrafter().realm)
+    return learned_crafts
 end
 
 -- ============================================================
 -- Addon Bootstrap (must stay in global scope)
 -- ============================================================
-local littleshop = LittleShop:new()
-littleshop:ActivateService()
+local littleshop = LittleShop:New()
 
 -- Minimap Button Setup
 LittleShop.MINIMAP_BUTTON = {
     icon = "Interface\\Icons\\INV_Chest_Cloth_17",
-    tooltip = "Little Shop - Click to toggle the order board.",
-    OnClick = function()
-        littleshop:ToggleShow()
+    tooltip = "LittleShop - Left-click to toggle the order board. Right-click to activate/deactivate the service.",
+    OnClick = function(frame, button)
+        if button == "LeftButton" then
+            -- Left-click: toggle the main frame and service
+
+            littleshop:ToggleShow()
+        elseif button == "RightButton" then
+            -- Right-click: placeholder for context menu or alternate action
+            if not littleshop:IsActive() then
+                littleshop:ActivateService()
+            else
+                littleshop:DeactivateService()
+            end
+        end
     end
 }
-local addon = LibStub("AceAddon-3.0"):NewAddon("Bunnies")
-local bunnyLDB = LibStub("LibDataBroker-1.1"):NewDataObject("LITTLESHOP_UI_MINIMAP_BUTTON", {
+local addon = LibStub("AceAddon-3.0"):NewAddon("LittleShop")
+local minimap_button = LibStub("LibDataBroker-1.1"):NewDataObject("LITTLESHOP_UI_MINIMAP_BUTTON", {
     type = "UI",
     text = LittleShop.MINIMAP_BUTTON.tooltip,
     icon = LittleShop.MINIMAP_BUTTON.icon,
     OnClick = LittleShop.MINIMAP_BUTTON.OnClick,
 })
+
+-- Minimap button library
 local icon = LibStub("LibDBIcon-1.0")
 
 -- Activate the service when the addon is loaded
@@ -384,7 +454,7 @@ function addon:OnInitialize()
             },
         },
     })
-    icon:Register("LittleShop", bunnyLDB, self.db.profile.minimap)
+    icon:Register("LittleShop", minimap_button, self.db.profile.minimap)
 
     LOGGER.CONSOLE.info("LittleShop Addon Initialized.")
     LOGGER.CONSOLE.info("Saved Variables Loaded: " .. tostring(LittleShopSavedVariables))
@@ -392,7 +462,7 @@ end
 
 --[[
 Slash Command Handlers
-]]    
+]]
 
 SLASH_LITTLESHOP_BOOT = "/littleshop"
 SLASH_LITTLESHOP_TOGGLE_SHOW = "/showshop"
@@ -402,6 +472,3 @@ end
 SlashCmdList["LITTLESHOP_TOGGLE_SHOW"] = function()
     littleshop:ToggleShow()
 end
-
-
-

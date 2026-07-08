@@ -5,8 +5,11 @@
 ## Author: FroStyNeavus
 ## SavedVariables: LittleShopSavedVariables
 
+# External dependencies
+libs/LibDBIcon-1.0.lua
 
-LibDBIcon-1.0.lua
-logger.lua
-littleshop.lua
-
+# Addon source (load order matters: dependencies before consumers)
+src/logger.lua
+src/craft.lua
+src/order.lua
+src/littleshop.lua
