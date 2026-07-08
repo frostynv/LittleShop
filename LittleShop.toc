@@ -3,6 +3,10 @@
 ## Title: Little Shop
 ## Notes: Own your little work order shop!
 ## Author: FroStyNeavus
+## SavedVariables: LittleShopSavedVariables
 
+
+LibDBIcon-1.0.lua
 logger.lua
 littleshop.lua
+
