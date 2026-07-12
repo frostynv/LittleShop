@@ -21,6 +21,15 @@ function Craft:AddCrafter(crafter)
     self.crafters[crafter] = true
 end
 
+function Craft:AddCrafters(crafters)
+    if not self.crafters then
+        self.crafters = {}
+    end
+    for _, crafter in ipairs(crafters) do
+        self:AddCrafter(crafter)
+    end
+end
+
 function Craft:RemoveCrafter(crafter)
     if self.crafters then
         self.crafters[crafter] = nil

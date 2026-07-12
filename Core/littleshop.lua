@@ -1,11 +1,44 @@
 -- LittleShop Addon
 APP_NAME = "LittleShop"
 -- Order and Item classes are defined in order.lua, loaded before this file.
+DEFAULT_PROFILE = {
+    name = "default",
+    minimap = {
+        hide = false,
+    },
+}
+
+
+
+
+
 
 -- Capture class references from global scope (exported by order.lua and item.lua)
 -- to avoid repeated global lookups while keeping namespace pollution minimal
 local Order = _G.Order
 local Craft = _G.Craft
+
+
+-- ============================================================
+-- Saved Variables Schema
+-- ============================================================
+local SAVED_VARS_SCHEMA = {
+    profile_settings = {},
+    learned_crafts = {},
+    orders = {}
+}
+
+-- Validate and initialize saved variables structure
+local function EnsureSavedVarsStructure()
+    if not LittleShopSavedVariables then
+        LittleShopSavedVariables = {}
+    end
+    for key, default_value in pairs(SAVED_VARS_SCHEMA) do
+        if LittleShopSavedVariables[key] == nil then
+            LittleShopSavedVariables[key] = {}
+        end
+    end
+end
 
 
 -- ============================================================
@@ -17,29 +50,39 @@ Persistence.__index = Persistence
 -- Mimic profile behavior by instancing the persistence class. This allows for future expansion to support multiple profiles.
 function Persistence:New()
     local instance = setmetatable({}, Persistence)
-    instance.profile_settings = {}   -- Profile settings for the current user
     instance.learned_crafts = {}     -- Map of learned items keyed by itemID: itemID -> craft object
     instance.orders = {}
-    instance.current_character = nil -- Initialize crafter tracking
+    instance.profile_settings = {}   -- Profile settings for the addon, can be expanded in the future
     return instance
 end
 
-function Persistence:Init()
-    -- Load saved variables from the global scope (LittleShopSavedVariables)
-    if not LittleShopSavedVariables then
-        LittleShopSavedVariables = {}
+function Persistence:Initialize(...)
+    EnsureSavedVarsStructure()
+    
+    local profile_name = ... or DEFAULT_PROFILE.name
+    if LittleShopSavedVariables then
+        self.profile_settings = LittleShopSavedVariables.profile_settings[profile_name] or {}
+        self.learned_crafts = LittleShopSavedVariables.learned_crafts or {}
+        self.orders = LittleShopSavedVariables.orders or {}
+        
+        -- Restore metatables to persisted Craft instances
+        for item_id, craft_data in pairs(self.learned_crafts) do
+            setmetatable(craft_data, Craft)
+        end
+        
+        -- Restore metatables to persisted Order instances
+        for order_id, order_data in pairs(self.orders) do
+            setmetatable(order_data, Order)
+        end
     end
-    self.profile_settings = LittleShopSavedVariables.profile or {}
-    self.learned_crafts = LittleShopSavedVariables.learned_crafts or {}
-    self.orders = LittleShopSavedVariables.orders or {}
+    return self
 end
 
-function Persistence:CurrentCrafter()
-    return self.current_character
-end
-
-function Persistence:SetCurrentCrafter(character)
-    self.current_character = character
+function Persistence:Save()
+    EnsureSavedVarsStructure()
+    LittleShopSavedVariables.profile_settings = self.profile_settings
+    LittleShopSavedVariables.learned_crafts = self.learned_crafts
+    LittleShopSavedVariables.orders = self.orders
 end
 
 function Persistence:CurrentProfile()
@@ -70,19 +113,41 @@ function Persistence:RemoveCraftableItem    (craft)
     self.learned_crafts[craft.item_id] = nil
 end
 
+function Persistence:CraftableItemCountSize()
+    local count = 0
+    for _ in pairs(self.learned_crafts) do
+        count = count + 1
+    end
+    return count
+end
+
 function Persistence:SetCraftableItem(craft)
     self.learned_crafts[craft.item_id] = craft
 end
 
 function Persistence:MergeLearnedCrafts(new_crafts)
+    if not new_crafts or next(new_crafts) == nil then
+        LOGGER.CONSOLE.warn("No new crafts to merge into persistence. Skipping merge.")
+        return
+    end
     for item_id, new_craft in pairs(new_crafts) do
         if self.learned_crafts[item_id] then
-            self.learned_crafts[item_id]:AddCrafter(new_craft.crafter) -- Merge crafters if the item already exists
+            self.learned_crafts[item_id]:AddCrafters(new_craft:GetCrafters()) -- Merge crafters if the item already exists
         else
             -- New item, just add it
             self.learned_crafts[item_id] = new_craft
         end
     end
+
+    LOGGER.CONSOLE.info("In total " .. self:CraftableItemCountSize() .. " craft in persistence.")
+end
+
+function Persistence:GetCraftableItem(item_id)
+    return self.learned_crafts[item_id]
+end
+
+function Persistence:IsCraftableItemLearned(item_id)
+    return self.learned_crafts[item_id] ~= nil
 end
 
 
@@ -131,8 +196,12 @@ function LittleShop:New()
     local instance = setmetatable({}, LittleShop)
     instance.is_active = false
     instance.persistence = Persistence:New()
+    instance.current_character = nil -- Initialize crafter tracking
 
     -- TODO: Setup the profile loading and saving mechanism for the addon. This will allow users to have different profiles for different characters or playstyles.
+    
+    -- Global abstract frame for register of events
+    instance.META_FRAME = CreateFrame("Frame")
     instance.main_frame = nil
     instance.order_frame = nil
     instance._order_provider = CreateDataProvider()
@@ -140,6 +209,46 @@ function LittleShop:New()
     instance.profile_frame = nil
     return instance
 end
+
+
+-- ============================================================
+-- API Event Registration and Handling
+--============================================================
+
+LittleShop.EVENTS = {}
+
+-- Registering events for the addon.
+function LittleShop:RegisterEvent(event, handler)
+    if not self.META_FRAME then
+        self.META_FRAME = CreateFrame("Frame")
+    end
+    self.META_FRAME:RegisterEvent(event)
+    self.META_FRAME:SetScript("OnEvent", function(frame, event, ...)
+        handler(self, event, ...)
+    end)
+    return handler
+end
+
+-- Bind API events to their handler functions.
+function LittleShop:BindEvents(events)
+    for _, event in ipairs(events) do
+        self:RegisterEvent(event, function(self, event, ...)
+            LOGGER.CONSOLE.info("Event triggered: " .. event)
+            if self.EVENTS[event] then
+                self.EVENTS[event](self, event, ...)
+            end
+        end)
+    end
+end
+
+function LittleShop:GetCurrentCrafter()
+    return self.current_character
+end
+
+function LittleShop:SetCurrentCrafter(character)
+    self.current_character = character
+end
+
 
 function LittleShop:AddOrder(orderData)
     self.persistence:AddOrder(orderData)
@@ -171,19 +280,6 @@ end
 function LittleShop:ParseItemIdFromLink(item_link)
     if not item_link then return nil end
     return string.match(item_link, "item:(%d+)")
-end
-
-function LittleShop:ActivateService()
-    LOGGER.CONSOLE.info("Activating Little Shop Service...")
-    if not self.main_frame then
-        self:InitializeFrame()
-        self.main_frame:SetScript("OnLoad", function()
-        end)
-    end
-    self.persistence:Init()
-    self.learned_crafts = self:ScanCraftableItems()
-    self.is_active = true
-    LOGGER.CONSOLE.info("Little Shop Service Activated. Use /showshop to toggle the order board.")
 end
 
 function LittleShop:DeactivateService()
@@ -313,14 +409,53 @@ function LittleShop:InitializeFrame()
 
     scroll_box:SetDataProvider(self._order_provider, ScrollBoxConstants.RetainScrollPosition)
 
-    self.main_frame:RegisterEvent("CHAT_MSG_CHANNEL") -- Listens to Trade Chat and other channels (Great for production!)
-    self.main_frame:RegisterEvent("CHAT_MSG_SAY")     -- Listens to normal /say (Great for testing!)
-    -- Capture addon instance in a closure: WoW passes the frame as 'self' to OnEvent
-    local addon = self
-    self.main_frame:SetScript("OnEvent", function(frame, event, ...)
-        addon:OnChatDetectedEvent(event, ...)
-    end)
+    -- self.main_frame:RegisterEvent("CHAT_MSG_CHANNEL") -- Listens to Trade Chat and other channels (Great for production!)
+    -- self.main_frame:RegisterEvent("CHAT_MSG_SAY")     -- Listens to normal /say (Great for testing!)
+    -- -- Capture addon instance in a closure: WoW passes the frame as 'self' to OnEvent
+    -- local addon = self
+    -- self.main_frame:SetScript("OnEvent", function(frame, event, ...)
+    --     addon:OnChatDetectedEvent(event, ...)
+    -- end)
 end
+
+
+function LittleShop.EVENTS:PLAYER_LOGIN()
+    LOGGER.CONSOLE.info("Player logged in. Initializing Little Shop...")
+    local player_name = UnitName("player")
+    local player_realm = GetRealmName()
+    local player_guid = UnitGUID("player")
+    self.current_character = Crafter:New(Character:New(player_name, player_realm, player_guid), nil)
+    self:SetCurrentCrafter(self.current_character)
+    
+    -- Activate service
+    LOGGER.CONSOLE.info("Activating Little Shop Service...")
+    if not self.main_frame then
+        self:InitializeFrame()
+        self.main_frame:SetScript("OnLoad", function()
+        end)
+    end
+    self.persistence:Initialize()
+    local learned_crafts = self:ScanCraftableItems()
+    self.persistence:MergeLearnedCrafts(learned_crafts)
+    
+    self.is_active = true
+    LOGGER.CONSOLE.info("Little Shop Service Activated. Use /showshop to toggle the order board.")
+end
+
+function LittleShop.EVENTS:CHAT_MSG_CHANNEL(event, ...)
+    self:OnChatDetectedEvent(event, ...)
+end
+
+function LittleShop.EVENTS:CHAT_MSG_SAY(event, ...)
+    self:OnChatDetectedEvent(event, ...)
+end
+
+function LittleShop.EVENTS:ADDON_LOADED(event, addon_name)
+    if addon_name == "LittleShop" then
+        LOGGER.CONSOLE.info("Little Shop Addon Loaded.")
+    end
+end
+
 
 --[[
     Event Handler for Chat Detection
@@ -349,20 +484,15 @@ function LittleShop:OnChatDetectedEvent(event, ...)
     if item_link then
         local unique_id = guid .. "_" .. timestamp.day .. timestamp.hour .. timestamp.min .. timestamp.sec
         local item_id = self:ParseItemIdFromLink(item_link)
-        local is_item_learned = self.learned_crafts and self.learned_crafts[item_id] ~= nil
+        local is_learned = self.persistence:IsCraftableItemLearned(item_id)
         
         local order = Order:New(unique_id, message, player_name, player_realm, guid, item_link,
             nil, timestamp, {
                 is_lfc = has_lfc_keyword,
-                is_learned = is_item_learned
+                is_learned = is_learned
             })
         
-        if is_item_learned then
-            order.state = Order.ORDER_STATE.PENDING
-        else
-            order.state = Order.ORDER_STATE.UNLEARNED
-        end
-
+        order.state = is_learned and Order.ORDER_STATE.PENDING or Order.ORDER_STATE.UNLEARNED
         self:AddOrder(order)
         LOGGER.CONSOLE.info("New order from " .. player_realm .. "-" .. player_name .. ": " .. tostring(item_link))
         PlaySound(self.SOUNDS.LFC_DETECTED)
@@ -395,7 +525,7 @@ function LittleShop:ScanCraftableItems()
                 local itemID = string.match(item_link, "item:(%d+)")
                 -- Case: Corruption of data or edge cases
                 if itemID ~= nil then
-                    local craft = Craft:New(itemID, item_link, { [self:Persistence():CurrentCrafter().name] = true }, recipeID)
+                    local craft = Craft:New(itemID, item_link, { [self:GetCurrentCrafter().name] = true }, recipeID)
                     learned_crafts[itemID] = craft
                     count = count + 1
                 end
@@ -405,7 +535,7 @@ function LittleShop:ScanCraftableItems()
     LOGGER.CONSOLE.info("LittleShop found " ..
         count ..
         " craftable items for " ..
-        self:Persistence():CurrentCrafter().name .. " on realm " .. self:Persistence():CurrentCrafter().realm)
+        self:GetCurrentCrafter().name .. " on realm " .. self:GetCurrentCrafter().realm)
     return learned_crafts
 end
 
@@ -413,62 +543,8 @@ end
 -- Addon Bootstrap (must stay in global scope)
 -- ============================================================
 local littleshop = LittleShop:New()
-
--- Minimap Button Setup
-LittleShop.MINIMAP_BUTTON = {
-    icon = "Interface\\Icons\\INV_Chest_Cloth_17",
-    tooltip = "LittleShop - Left-click to toggle the order board. Right-click to activate/deactivate the service.",
-    OnClick = function(frame, button)
-        if button == "LeftButton" then
-            -- Left-click: toggle the main frame and service
-
-            littleshop:ToggleShow()
-        elseif button == "RightButton" then
-            -- Right-click: placeholder for context menu or alternate action
-            if not littleshop:IsActive() then
-                littleshop:ActivateService()
-            else
-                littleshop:DeactivateService()
-            end
-        end
-    end
-}
-local addon = LibStub("AceAddon-3.0"):NewAddon("LittleShop")
-local minimap_button = LibStub("LibDataBroker-1.1"):NewDataObject("LITTLESHOP_UI_MINIMAP_BUTTON", {
-    type = "UI",
-    text = LittleShop.MINIMAP_BUTTON.tooltip,
-    icon = LittleShop.MINIMAP_BUTTON.icon,
-    OnClick = LittleShop.MINIMAP_BUTTON.OnClick,
+littleshop:BindEvents({
+    "PLAYER_LOGIN",
+    "PLAYER_LOGOUT",
+    "ADDON_LOADED"
 })
-
--- Minimap button library
-local icon = LibStub("LibDBIcon-1.0")
-
--- Activate the service when the addon is loaded
-function addon:OnInitialize()
-    -- Assuming you have a ## SavedVariables: LittleShopSavedVariables line in your TOC
-    self.db = LibStub("AceDB-3.0"):New("LittleShopSavedVariables", {
-        profile = {
-            minimap = {
-                hide = false,
-            },
-        },
-    })
-    icon:Register("LittleShop", minimap_button, self.db.profile.minimap)
-
-    LOGGER.CONSOLE.info("LittleShop Addon Initialized.")
-    LOGGER.CONSOLE.info("Saved Variables Loaded: " .. tostring(LittleShopSavedVariables))
-end
-
---[[
-Slash Command Handlers
-]]
-
-SLASH_LITTLESHOP_BOOT = "/littleshop"
-SLASH_LITTLESHOP_TOGGLE_SHOW = "/showshop"
-SlashCmdList["LITTLESHOP_BOOT"] = function()
-    littleshop:ActivateService()
-end
-SlashCmdList["LITTLESHOP_TOGGLE_SHOW"] = function()
-    littleshop:ToggleShow()
-end
