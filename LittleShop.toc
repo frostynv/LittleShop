@@ -9,8 +9,16 @@
 Libs/LibDBIcon-1.0/embeds.xml
 Libs/LibDBIcon-1.0/LibDBIcon-1.0/lib.xml
 
-# Addon source (load order matters: dependencies before consumers)
-Core/logger.lua
+# Dependecies loading
+Core/module.lua
+
+# Core classes
 Core/craft.lua
 Core/order.lua
+
+# Addon source (load order matters: dependencies before consumers)
+Core/logger.lua
 Core/littleshop.lua
+
+
+

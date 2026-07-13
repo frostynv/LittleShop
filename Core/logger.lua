@@ -1,8 +1,12 @@
 -- Color Constants (WoW color code format: |cFFRRGGBB text |r)
 
--- @type table APP_NAME_LOG
--- @field APP_NAME_LOG string The name of the application for logging purposes.
-APP_NAME = APP_NAME or {}
+-- @type table LOGGER
+-- @field COLORS table Color codes for console output
+-- @field IS_DEBUG boolean Whether debug logging is enabled
+-- @field CONSOLE table Logging functions (print, error, warn, info, list)
+
+-- Application name for logging (independent of LittleShop class)
+local ADDON_NAME = select(1,...)
 
 LOGGER = {
     COLORS = {
@@ -23,23 +27,23 @@ LOGGER = {
     CONSOLE = {
         print = function(message)
             if LOGGER.IS_DEBUG then
-                print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.RESET .. " " .. message)
+                print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.RESET .. " " .. message)
             end
         end,
         error = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.RED .. " " .. message)
+            print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.RED .. " " .. message)
         end,
         warn = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.YELLOW .. " " .. message)
+            print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.YELLOW .. " " .. message)
         end,
         info = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.BLUE .. " " .. tostring(message) .. LOGGER.COLORS.RESET)
+            print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.BLUE .. " " .. tostring(message) .. LOGGER.COLORS.RESET)
         end,
         list = function(items)
             if not items or #items == 0 then return end
             for i, item in ipairs(items) do
                 if i == 1 then
-                    print(LOGGER.COLORS.APP_COLOR .. "[" .. APP_NAME .. "]" .. LOGGER.COLORS.RESET .. " | " .. tostring(item))
+                    print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.RESET .. " | " .. tostring(item))
                 else
                     print(" | " .. tostring(item))
                 end

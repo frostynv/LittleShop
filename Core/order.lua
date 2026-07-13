@@ -1,7 +1,8 @@
+
+local LittleShop = select(2, ...) -- Get the namespace table from the addon
 -- ============================================================
 -- Order Class
 -- ============================================================
-
 -- @type Order
 -- @field unique_id   string  Composite key: GUID + day/H/M/S components
 -- @field message     string  Raw chat message that triggered the order
@@ -12,8 +13,7 @@
 -- @field flags       table   Behavioral flags: { is_lfc, is_learned }
 local Order = {}
 Order.__index = Order
-
-
+LittleShop.export("Order", Order)
 -- Lifecycle states for a work order.
 -- Negative values represent pre-active/non-actionable states.
 Order.ORDER_STATE = {
@@ -72,6 +72,7 @@ end
 -- @field profession string|nil     Optional: profession that produces this item
 local Item = {}
 Item.__index = Item
+LittleShop.export("Item", Item)
 
 -- @param item_id    string
 -- @param item_link  string
@@ -86,6 +87,3 @@ function Item:New(item_id, item_link, crafter, profession)
     instance.profession = profession    -- Optional
     return instance
 end
-
-_G.Order = Order
-_G.Item = Item
