@@ -1,6 +1,7 @@
-Namespace = select(2, ...) -- Get the namespace table from the addon
-Order = Namespace.require("Order")
-Craft = Namespace.require("Craft")
+local namespace = select(2, ...) -- Get the namespace table from the addon
+local Order = namespace.require("Order")
+local Craft = namespace.require("Craft")
+local EnhancedFrame = namespace.require("EnhancedFrame")
 
 
 -- ============================================================
@@ -92,6 +93,7 @@ function Persistence:ResetOrders()
     self.orders = {}
 end
 
+-- Learned Crafts Management
 function Persistence:AddCraftableItem(craft)
     self.learned_crafts[craft.item_id] = craft
     if self.on_crafts_changed then
@@ -609,7 +611,6 @@ function LittleShop:BuildUI()
     end
     
     crafts_scroll_box:SetDataProvider(self._crafts_provider, ScrollBoxConstants.RetainScrollPosition)
-    
     -- Bind provider refresh to persistence changes
     self.persistence.on_crafts_changed = function()
         self._crafts_provider:Flush()

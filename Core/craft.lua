@@ -1,11 +1,11 @@
+local namespace = select(2, ...) -- Get the namespace table from the addon
 -- ============================================================
 -- Craft Class
 -- ============================================================
 -- Represents a craftable item in the player's known recipes. Craftable items could spread across different characters thus, it's important to keep information about the crafter character
 local Craft = {}
 Craft.__index = Craft
-local LittleShop = select(2, ...) -- Get the namespace table from the addon
-LittleShop.export("Craft", Craft) -- Export to the LittleShop addon instance
+namespace.export("Craft", Craft) -- Export to the LittleShop addon instance
 
 function Craft:New(item_id, item_link, crafters, profession)
     local instance      = setmetatable({}, Craft)
