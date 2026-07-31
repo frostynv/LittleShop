@@ -1,200 +1,11 @@
 local namespace = select(2, ...) -- Get the namespace table from the addon
-local Order = namespace.require("Order")
-local Craft = namespace.require("Craft")
-local EnhancedFrame = namespace.require("EnhancedFrame")
-
-
--- ============================================================
--- Persistence Class
--- ============================================================
--- @type Persistence
--- @field learned_crafts table    Map of item_id -> Craft object for learned recipes
--- @field orders        table    Map of order.unique_id -> Order object
--- @field profile_settings table Profile-specific settings (can be expanded for multi-profile support)
-local Persistence = {}
-Persistence.__index = Persistence
-Persistence.DEFAULT_PROFILE = {
-    name = "default",
-    minimap = {
-        hide = false,
-    },
-}
-
-Persistence.FACTORY_SAVEDVARIABLE = {
-    profile_settings = {},
-    learned_crafts = {},
-    orders = {},
-    ValidateSavedVariableStructure = function()
-    if not LittleShopSavedVariables then
-        LittleShopSavedVariables = {}
-    end
-    for key, default_value in pairs(Persistence.FACTORY_SAVEDVARIABLE) do
-        if LittleShopSavedVariables[key] == nil then
-            LittleShopSavedVariables[key] = default_value
-        end
-    end
-end
-}
-
--- Creates a new Persistence instance
--- Mimic profile behavior by instancing the persistence class. This allows for future expansion to support multiple profiles.
--- @return Persistence
-function Persistence:New()
-    local instance = setmetatable({}, Persistence)
-    instance.learned_crafts = {}   -- Map of learned items keyed by itemID: itemID -> craft object
-    instance.orders = {}
-    instance.profile_settings = {} -- Profile settings for the addon, can be expanded in the future
-    return instance
-end
-
--- Initializes persistence with saved data from WoW's SavedVariables
--- Restores metatables to Craft and Order instances (lost during serialization)
--- @param profile_name string Optional profile name; defaults to 'default'
--- @return Persistence self
-function Persistence:Initialize(...)
-    Persistence.FACTORY_SAVEDVARIABLE.ValidateSavedVariableStructure()
-    local profile_name = ... or Persistence.DEFAULT_PROFILE.name
-    if LittleShopSavedVariables then
-        self.profile_settings = LittleShopSavedVariables.profile_settings[profile_name] or {}
-        self.learned_crafts = LittleShopSavedVariables.learned_crafts or {}
-        self.orders = LittleShopSavedVariables.orders or {}
-
-        -- Restore metatables to persisted Craft instances
-        -- (Serialization loses metatable info; we reattach them when loading)
-        for item_id, craft_data in pairs(self.learned_crafts) do
-            setmetatable(craft_data, Craft)
-        end
-
-        -- Restore metatables to persisted Order instances
-        for order_id, order_data in pairs(self.orders) do
-            setmetatable(order_data, Order)
-        end
-    end
-    return self
-end
-
-function Persistence:CurrentProfile()
-    return self.profile_settings
-end
-
-function Persistence:AddOrder(order)
-    self.orders[order.unique_id] = order
-end
-
-function Persistence:GetOrder(order)
-    return self.orders[order.unique_id]
-end
-
-function Persistence:RemoveOrder(order)
-    self.orders[order.unique_id] = nil
-end
-
-function Persistence:ResetOrders()
-    self.orders = {}
-end
-
--- Learned Crafts Management
-function Persistence:AddCraftableItem(craft)
-    self.learned_crafts[craft.item_id] = craft
-    if self.on_crafts_changed then
-        self.on_crafts_changed()
-    end
-end
-
-function Persistence:RemoveCraftableItem(craft)
-    self.learned_crafts[craft.item_id] = nil
-end
-
-function Persistence:CraftableItemCountSize()
-    local count = 0
-    for _ in pairs(self.learned_crafts) do
-        count = count + 1
-    end
-    return count
-end
-
--- ============================================================
--- Getter / Setters
--- =============================================================
-function Persistence:GetCraftableItem(item_id)
-    return self.learned_crafts[item_id]
-end
-
-function Persistence:IsCraftableItemLearned(item_id)
-    return self.learned_crafts[item_id] ~= nil
-end
-
-function Persistence:SetCraftableItem(craft)
-    self.learned_crafts[craft.item_id] = craft
-end
-
-function Persistence:MergeLearnedCrafts(new_crafts)
-    if not new_crafts or next(new_crafts) == nil then
-        LOGGER.CONSOLE.warn("No new crafts to merge into persistence. Skipping merge.")
-        return
-    end
-    for item_id, new_craft in pairs(new_crafts) do
-        if self.learned_crafts[item_id] then
-            self.learned_crafts[item_id]:AddCrafters(new_craft:GetCrafters()) -- Merge crafters if the item already exists
-        else
-            -- New item, just add it
-            self.learned_crafts[item_id] = new_craft
-        end
-    end
-    if self.on_crafts_changed then
-        self.on_crafts_changed()
-    end
-    LOGGER.CONSOLE.info("In total " .. self:CraftableItemCountSize() .. " craft in persistence.")
-end
-
-
-
--- ==============================================================
--- Character Class
--- ==============================================================
-
--- @type Character
--- @field name  string Character name
--- @field realm string Realm (server) name
--- @field guid  string WoW player GUID
-local Character = {}
-Character.__index = Character
-
--- Creates a new Character instance
--- @param name string Character name
--- @param realm string Realm name
--- @param guid string Player GUID
--- @return Character
-function Character:New(name, realm, guid)
-    local instance = setmetatable({}, Character)
-    instance.name = name
-    instance.realm = realm
-    instance.guid = guid
-    return instance
-end
-
--- ==============================================================
--- Crafter Class
--- ==============================================================
-
--- @type Crafter
--- @field name       string Character name (inherited from Character)
--- @field realm      string Realm name (inherited from Character)
--- @field guid       string Player GUID (inherited from Character)
--- @field profession string Profession name (e.g. "Blacksmithing", "Tailoring")
-local Crafter = {}
-Crafter.__index = Crafter
-
--- Creates a new Crafter instance (extends Character)
--- @param character Character object containing name, realm, guid
--- @param profession string Profession name
--- @return Crafter
-function Crafter:New(character, profession)
-    local instance = Character:New(character.name, character.realm, character.guid)
-    setmetatable(instance, Crafter)
-    instance.profession = profession
-    return instance
-end
+local Order = namespace.require("order")
+local Craft = namespace.require("craft")
+local Character = namespace.require("character")
+local Crafter = namespace.require("crafter")
+local EnhancedFrame = namespace.require("enhancedframe")
+local Persistence = namespace.require("persistence")
+local WowUtil = namespace.require("wowutil")
 
 -- ============================================================
 -- LittleShop Class
@@ -233,16 +44,25 @@ function LittleShop:New()
 
     -- Global abstract frame for register of events
     instance.EVENT_FRAME = CreateFrame("Frame")
+
+    -- UI Elements
     instance.main_frame = nil
     instance.order_frame = nil
-    instance._order_provider = CreateDataProvider()
-    instance._crafts_provider = CreateDataProvider() -- Data provider for learned crafts
+    instance._order_provider = nil
+    instance._crafts_provider = nil
     instance.manage_frame = nil
     instance.profile_frame = nil
-    instance.minimap_button = LittleShop.MINIMAP_BUTTON.GetInstance(instance) -- Imported 
+    instance.minimap_button = LittleShop.MINIMAP_BUTTON.GetInstance({
+        onClick = function(frame, button)
+            if button == "LeftButton" then
+                instance:ToggleUI()
+            elseif button == "RightButton" then
+                instance:ToggleService()
+            end
+        end
+    }) -- Imported from singleton
     return instance
 end
-
 
 
 -- =============================================================
@@ -267,7 +87,7 @@ end
 -- @return void
 function LittleShop:AddOrder(orderData)
     self.persistence:AddOrder(orderData)
-    self._order_provider:Insert(orderData)
+    self:GetOrderProvider():Insert(orderData)
 end
 
 -- Removes an order from both persistence and UI data provider
@@ -275,20 +95,38 @@ end
 -- @return void
 function LittleShop:RemoveOrder(order)
     self.persistence:RemoveOrder(order)
-    self._order_provider:RemoveByIndex(order.unique_id)
+    self:GetOrderProvider():RemoveByIndex(order.unique_id)
 end
 
 -- Clears all orders from persistence and UI data provider
 -- @return void
 function LittleShop:ResetOrders()
     self.persistence:ResetOrders()
-    self._order_provider:Flush()
+    self:GetOrderProvider():Flush()
 end
 
 -- Gets the UI data provider for order display
 -- @return DataProvider
 function LittleShop:GetProvider()
+    return self:GetOrderProvider()
+end
+
+-- Gets or lazily creates the order data provider
+-- @return DataProvider
+function LittleShop:GetOrderProvider()
+    if not self._order_provider then
+        self._order_provider = CreateDataProvider()
+    end
     return self._order_provider
+end
+
+-- Gets or lazily creates the crafts data provider
+-- @return DataProvider
+function LittleShop:GetCraftsProvider()
+    if not self._crafts_provider then
+        self._crafts_provider = CreateDataProvider()
+    end
+    return self._crafts_provider
 end
 
 -- Checks if the addon service is currently active
@@ -303,15 +141,6 @@ function LittleShop:Persistence()
     return self.persistence
 end
 
--- Extracts item ID from a WoW item link
--- Item link format: |cFF0070dditem:item_id:...|h[Item Name]|h|r
--- @param item_link string WoW item hyperlink
--- @return number item_id or nil if extraction fails
-function LittleShop:ParseItemIdFromLink(item_link)
-    if not item_link then return nil end
-    return string.match(item_link, "item:(%d+)")
-end
-
 -- Deactivates the addon service
 -- @return void
 function LittleShop:DeactivateService()
@@ -323,14 +152,22 @@ end
 -- Toggles visibility of the main frame
 -- Initializes frame on first call
 -- @return void
-function LittleShop:ToggleShow()
+function LittleShop:ToggleUI()
     if not self.main_frame then
-        self:InitializeFrame()
+        return
     end
     if self.main_frame:IsShown() then
         self.main_frame:Hide()
     else
         self.main_frame:Show()
+    end
+end
+
+function LittleShop:ToggleService()
+    if self.is_active then
+        self:DeactivateService()
+    else
+        self:ActivateService()
     end
 end
 
@@ -354,7 +191,7 @@ function LittleShop:OnChatDetectedEvent(event, ...)
 
     if item_link then
         local unique_id = guid .. "_" .. timestamp.day .. timestamp.hour .. timestamp.min .. timestamp.sec
-        local item_id = self:ParseItemIdFromLink(item_link)
+        local item_id = WowUtil.ParseItemIdFromLink(item_link)
         local is_learned = self.persistence:IsCraftableItemLearned(item_id)
 
         local order = Order:New(unique_id, message, player_name, player_realm, guid, item_link,
@@ -393,7 +230,7 @@ function LittleShop:ScanCraftableItems()
             local item_link = C_TradeSkillUI.GetRecipeItemLink(recipeID)
             if item_link then
                 -- Info: We decided on itemid as the key for tables + encapsulating identifier for a craftable recipe
-                local itemID = string.match(item_link, "item:(%d+)")
+                local itemID = WowUtil.ParseItemIdFromLink(item_link)
                 -- Case: Corruption of data or edge cases
                 if itemID ~= nil then
                     local craft = Craft:New(itemID, item_link, { [self:GetCurrentCrafter().name] = true }, recipeID)
@@ -459,10 +296,7 @@ function LittleShop.EVENTS:PLAYER_LOGIN()
     end
     self.persistence:Initialize()
     self.persistence:MergeLearnedCrafts(self:ScanCraftableItems())
-
     self.is_active = true
-
-
     LOGGER.CONSOLE.info("Little Shop Service Activated. Use /showshop to toggle the order board.")
 end
 
@@ -485,55 +319,46 @@ end
 -- SINGLETON ASSETS
 -- ===========================================================
 LittleShop.MINIMAP_BUTTON = {
-    littleshop = nil,
-    dbname = "LittleShopMinimapButton",
-    icon = "Interface\\Icons\\INV_Chest_Cloth_17",
-    tooltip = "LittleShop - Left-click to toggle the order board. Right-click to activate/deactivate the service.",
-    OnClick = function(frame, button)
-        if button == "LeftButton" then
-            -- Left-click: toggle the main frame and service
-
-            LittleShop.MINIMAP_BUTTON.littleshop:ToggleShow()
-        elseif button == "RightButton" then
-            -- Right-click: placeholder for context menu or alternate action
-            if not LittleShop.MINIMAP_BUTTON.littleshop:IsActive() then
-                LittleShop.MINIMAP_BUTTON.littleshop:ActivateService()
-            else
-                LittleShop.MINIMAP_BUTTON.littleshop:DeactivateService()
+    DEFAULT = {
+        hide = false,
+        minimapPos = 220,
+        lock = false,
+        tooltipText = "Little Shop - Left-click to toggle the order board. Right-click to activate/deactivate the service.",
+        icon = "Interface\\Icons\\INV_Chest_Cloth_17",
+        onClick = function(frame, button)
+            if button == "LeftButton" then
+                LOGGER.CONSOLE.info("Minimap button left-clicked.")
+            elseif button == "RightButton" then
+                LOGGER.CONSOLE.info("Minimap button right-clicked.")
             end
         end
-    end,
+    },
+    dbname = "LittleShopMinimapButton",
+    
     -- Initializes the minimap button with LibDBIcon
     -- @param littleshopdependency LittleShop instance (addon singleton)
     -- @return table MINIMAP_BUTTON config (with icon registered)
-    GetInstance = function(littleshopdependency)
-        LittleShop.MINIMAP_BUTTON.littleshop = littleshopdependency
-        
+    GetInstance = function(param)
         local icon = LibStub("LibDBIcon-1.0")
         local minimap_button = LibStub("LibDataBroker-1.1"):NewDataObject(
             LittleShop.MINIMAP_BUTTON.dbname, 
             {
-                type = "UI",
-                text = LittleShop.MINIMAP_BUTTON.tooltip,
-                icon = LittleShop.MINIMAP_BUTTON.icon,
-                OnClick = LittleShop.MINIMAP_BUTTON.OnClick,
+                type = "data source",
+                text = param.text or LittleShop.MINIMAP_BUTTON.DEFAULT.tooltipText,
+                icon = param.icon or LittleShop.MINIMAP_BUTTON.DEFAULT.icon,
+                OnClick = param.onClick or LittleShop.MINIMAP_BUTTON.DEFAULT.onClick,
             }
         )
-        
         -- Use DEFAULT_PROFILE.minimap as fallback if persistence not yet initialized
         -- (persistence initializes on PLAYER_LOGIN, but this is called at New())
-        local minimap_config = littleshopdependency:Persistence():CurrentProfile().minimap
-        if not minimap_config then
-            minimap_config = Persistence.DEFAULT_PROFILE.minimap
-            LOGGER.CONSOLE.info("Using default minimap config (persistence not yet initialized)")
-        end
-        
-        icon:Register("LittleShop", minimap_button, minimap_config)
+        icon:Register("LittleShop", minimap_button, param.config or LittleShop.MINIMAP_BUTTON.DEFAULT)
         return LittleShop.MINIMAP_BUTTON
     end
 }
 
 function LittleShop:BuildUI()
+    local crafts_provider = self:GetCraftsProvider()
+    local order_provider = self:GetOrderProvider()
 
     -- Create a frame to handle the profile and saved 
     self.profile_frame = CreateFrame("Frame","LFC_Profile_Frame", UIParent, "BasicFrameTemplate")
@@ -607,15 +432,15 @@ function LittleShop:BuildUI()
     
     -- Create data provider for learned crafts
     for item_id, craft in pairs(self.persistence.learned_crafts) do
-        self._crafts_provider:Insert(craft)
+        crafts_provider:Insert(craft)
     end
     
-    crafts_scroll_box:SetDataProvider(self._crafts_provider, ScrollBoxConstants.RetainScrollPosition)
+    crafts_scroll_box:SetDataProvider(crafts_provider, ScrollBoxConstants.RetainScrollPosition)
     -- Bind provider refresh to persistence changes
     self.persistence.on_crafts_changed = function()
-        self._crafts_provider:Flush()
+        crafts_provider:Flush()
         for item_id, craft in pairs(self.persistence.learned_crafts) do
-            self._crafts_provider:Insert(craft)
+            crafts_provider:Insert(craft)
         end
     end
 
@@ -717,7 +542,7 @@ function LittleShop:BuildUI()
         end)
     end)
 
-    scroll_box:SetDataProvider(self._order_provider, ScrollBoxConstants.RetainScrollPosition)
+    scroll_box:SetDataProvider(order_provider, ScrollBoxConstants.RetainScrollPosition)
 end
 
 local littleshop = LittleShop:New()

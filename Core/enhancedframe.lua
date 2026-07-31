@@ -21,7 +21,7 @@ local namespace = select(2, ...) -- Get the namespace table from the addon
 -- Encapsulates a single event with name and optional callback
 Event = {}
 Event.__index = Event
-namespace.export("Event", Event) -- Export to the LittleShop addon instance
+namespace.export("event", Event) -- Export to the LittleShop addon instance
 
 -- Creates a new Event instance
 -- @param name string Event identifier
@@ -53,7 +53,7 @@ end
 --   - ORDER_STATE_CHANGED: An order's state changed
 EventSpace = {}
 EventSpace.__index = EventSpace
-namespace.export("EventSpace", EventSpace) -- Export to the LittleShop addon instance
+namespace.export("eventspace", EventSpace) -- Export to the LittleShop addon instance
 
 -- Creates a new EventSpace instance
 -- Initializes with META_INFO event for basic pub-sub functionality
@@ -129,7 +129,7 @@ end
 -- Allows frames to easily subscribe and unsubscribe from EventSpace events.
 local EnhancedFrame = {}
 EnhancedFrame.__index = EnhancedFrame
-namespace.export("EnhancedFrame", EnhancedFrame) -- Export to the LittleShop addon instance
+namespace.export("enhancedframe", EnhancedFrame) -- Export to the LittleShop addon instance
 
 -- Converts a standard WoW Frame into an EnhancedFrame
 -- Adds event subscription capabilities without modifying original frame

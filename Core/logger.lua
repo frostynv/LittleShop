@@ -1,53 +1,97 @@
--- Color Constants (WoW color code format: |cFFRRGGBB text |r)
+local namespace = select(2, ...)
 
--- @type table LOGGER
--- @field COLORS table Color codes for console output
--- @field IS_DEBUG boolean Whether debug logging is enabled
--- @field CONSOLE table Logging functions (print, error, warn, info, list)
+local Logger = {}
+Logger.__index = Logger
+Logger._instance = nil
 
--- Application name for logging (independent of LittleShop class)
-local ADDON_NAME = select(1,...)
+Logger.COLORS = {
+    GREEN = "|cFF00FF00",
+    RED = "|cFFFF0000",
+    YELLOW = "|cFFFFFF00",
+    BLUE = "|cFF0080FF",
+    GOLD = "|cFFFFD700",
+    WHITE = "|cFFFFFFFF",
+    ORANGE = "|cFFFF8000",
+    PURPLE = "|cFFB000FF",
+    GRAY = "|cFF808080",
+    RESET = "|r",
+    APP_COLOR = "|cFFB000FF",
+}
 
-LOGGER = {
-    COLORS = {
-        GREEN = "|cFF00FF00", -- Success, info
-        RED = "|cFFFF0000", -- Error, critical
-        YELLOW = "|cFFFFFF00", -- Warning, caution
-        BLUE = "|cFF0080FF", -- Debug, info
-        GOLD = "|cFFFFD700", -- Highlight, important
-        WHITE = "|cFFFFFFFF", -- Default, neutral
-        ORANGE = "|cFFFF8000", -- Alert, notice
-        PURPLE = "|cFFB000FF", -- Special, magic
-        GRAY = "|cFF808080", -- Muted, disabled
-        RESET = "|r",      -- Color reset code
-
-        APP_COLOR = "|cFFB000FF", -- Application-specific color (example: purple)
-    },
-    IS_DEBUG = true,
-    CONSOLE = {
+local function create_instance(tag, is_debug)
+    local instance = setmetatable({}, Logger)
+    instance.tag = tag or "LittleShop"
+    instance.is_debug = is_debug ~= false
+    instance.COLORS = Logger.COLORS
+    instance.CONSOLE = {
         print = function(message)
-            if LOGGER.IS_DEBUG then
-                print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.RESET .. " " .. message)
-            end
+            instance:Print(message)
         end,
         error = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.RED .. " " .. message)
+            instance:Error(message)
         end,
         warn = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.YELLOW .. " " .. message)
+            instance:Warn(message)
         end,
         info = function(message)
-            print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.BLUE .. " " .. tostring(message) .. LOGGER.COLORS.RESET)
+            instance:Info(message)
         end,
         list = function(items)
-            if not items or #items == 0 then return end
-            for i, item in ipairs(items) do
-                if i == 1 then
-                    print(LOGGER.COLORS.APP_COLOR .. "[" .. ADDON_NAME .. "]" .. LOGGER.COLORS.RESET .. " | " .. tostring(item))
-                else
-                    print(" | " .. tostring(item))
-                end
-            end
+            instance:List(items)
         end,
-    },
-}
+    }
+    return instance
+end
+
+function Logger:GetInstance(tag, is_debug)
+    if not Logger._instance then
+        Logger._instance = create_instance(tag, is_debug)
+    elseif is_debug ~= nil then
+        Logger._instance.is_debug = is_debug
+    end
+    return Logger._instance
+end
+
+function Logger:New(tag, is_debug)
+    return Logger:GetInstance(tag, is_debug)
+end
+
+function Logger:_emit(color, message)
+    print(self.COLORS.APP_COLOR .. "[" .. self.tag .. "]" .. color .. " " .. tostring(message) .. self.COLORS.RESET)
+end
+
+function Logger:Print(message)
+    if self.is_debug then
+        self:_emit(self.COLORS.RESET, message)
+    end
+end
+
+function Logger:Error(message)
+    self:_emit(self.COLORS.RED, message)
+end
+
+function Logger:Warn(message)
+    self:_emit(self.COLORS.YELLOW, message)
+end
+
+function Logger:Info(message)
+    self:_emit(self.COLORS.BLUE, message)
+end
+
+function Logger:List(items)
+    if not items or #items == 0 then
+        return
+    end
+
+    for index, item in ipairs(items) do
+        if index == 1 then
+            print(self.COLORS.APP_COLOR .. "[" .. self.tag .. "]" .. self.COLORS.RESET .. " | " .. tostring(item))
+        else
+            print(" | " .. tostring(item))
+        end
+    end
+end
+
+namespace.export("logger", Logger)
+
+LOGGER = Logger:GetInstance(select(1, ...))

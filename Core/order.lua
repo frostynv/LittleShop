@@ -60,7 +60,7 @@ function Order:New(unique_id, message, player_name, player_realm, guid, item_lin
     instance.flags      = flags or { is_lfc = false, is_learned = false}
     return instance
 end
-namespace.export("Order", Order)
+namespace.export("order", Order)
 
 -- ============================================================
 -- Item Class
@@ -73,7 +73,7 @@ namespace.export("Order", Order)
 -- @field profession string|nil     Optional: profession that produces this item
 local Item = {}
 Item.__index = Item
-namespace.export("Item", Item)
+namespace.export("item", Item)
 
 -- @param item_id    string
 -- @param item_link  string
@@ -89,4 +89,4 @@ function Item:New(item_id, item_link, crafter, profession)
     return instance
 end
 
-namespace.export("Order", Order)
+namespace.export("order", Order)
