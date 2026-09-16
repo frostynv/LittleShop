@@ -15,13 +15,9 @@ local WowUtil = namespace.require("wowutil")
 -- @field is_active          boolean Whether the addon service is currently running
 -- @field persistence        Persistence Instance managing saved data
 -- @field current_character  Crafter Current character's crafter profile
--- @field META_FRAME         Frame WoW event registration frame
+-- @field EVENT_FRAME        Frame WoW event registration frame
 -- @field _order_provider    DataProvider UI data provider for order display
 -- @field _crafts_provider   DataProvider UI data provider for learned crafts display
--- @field main_frame         Frame Main UI frame (nil until initialized)
--- @field order_frame        Frame Order management UI frame
--- @field manage_frame       Frame Settings/management UI frame
--- @field profile_frame      Frame Profile UI frame
 local LittleShop = {}
 LittleShop.__index = LittleShop
 
@@ -36,34 +32,19 @@ LittleShop.APP_NAME = "LittleShop"
 -- @return LittleShop
 function LittleShop:New()
     local instance = setmetatable({}, LittleShop)
+    -- Initialize instance variables
     instance.is_active = false
     instance.persistence = Persistence:New()
     instance.current_character = nil -- Initialize crafter tracking
-
-    -- TODO: Setup the profile loading and saving mechanism for the addon. This will allow users to have different profiles for different characters or playstyles.
-
     -- Global abstract frame for register of events
     instance.EVENT_FRAME = CreateFrame("Frame")
 
-    -- UI Elements
-    instance.main_frame = nil
-    instance.order_frame = nil
+    -- UI Elements (created dynamically via FRAMES system)
     instance._order_provider = nil
     instance._crafts_provider = nil
-    instance.manage_frame = nil
-    instance.profile_frame = nil
-    instance.minimap_button = LittleShop.MINIMAP_BUTTON.GetInstance({
-        onClick = function(frame, button)
-            if button == "LeftButton" then
-                instance:ToggleUI()
-            elseif button == "RightButton" then
-                instance:ToggleService()
-            end
-        end
-    }) -- Imported from singleton
+    instance.minimap_button = nil
     return instance
 end
-
 
 -- =============================================================
 -- LittleShop API Methods
@@ -153,13 +134,14 @@ end
 -- Initializes frame on first call
 -- @return void
 function LittleShop:ToggleUI()
-    if not self.main_frame then
+    local main_frame = self.FRAMES:GetFrame("main_frame")
+    if not main_frame then
         return
     end
-    if self.main_frame:IsShown() then
-        self.main_frame:Hide()
+    if main_frame:IsShown() then
+        main_frame:Hide()
     else
-        self.main_frame:Show()
+        main_frame:Show()
     end
 end
 
@@ -288,15 +270,24 @@ function LittleShop.EVENTS:PLAYER_LOGIN()
     local player_guid = UnitGUID("player")
     self.current_character = Crafter:New(Character:New(player_name, player_realm, player_guid), nil)
     self:SetCurrentCrafter(self.current_character)
-
-    -- Activate service
-    LOGGER.CONSOLE.info("Activating Little Shop Service...")
-    if not self.main_frame then
-        self:BuildUI()
-    end
     self.persistence:Initialize()
     self.persistence:MergeLearnedCrafts(self:ScanCraftableItems())
     self.is_active = true
+
+    LOGGER.CONSOLE.info("Activating Little Shop Service...")
+    self:BuildUI()
+
+    -- Initialize minimap button
+    self.minimap_button = LittleShop.MINIMAP_BUTTON.GetInstance({
+        onClick = function(frame, button)
+            if button == "LeftButton" then
+                self:ToggleUI()
+            elseif button == "RightButton" then
+                self:ToggleService()
+            end
+        end
+    }) -- Imported from singleton
+
     LOGGER.CONSOLE.info("Little Shop Service Activated. Use /showshop to toggle the order board.")
 end
 
@@ -314,7 +305,6 @@ function LittleShop.EVENTS:ADDON_LOADED(event, addon_name)
     end
 end
 
-
 -- ============================================================
 -- SINGLETON ASSETS
 -- ===========================================================
@@ -323,7 +313,8 @@ LittleShop.MINIMAP_BUTTON = {
         hide = false,
         minimapPos = 220,
         lock = false,
-        tooltipText = "Little Shop - Left-click to toggle the order board. Right-click to activate/deactivate the service.",
+        tooltipText =
+        "Little Shop - Left-click to toggle the order board. Right-click to activate/deactivate the service.",
         icon = "Interface\\Icons\\INV_Chest_Cloth_17",
         onClick = function(frame, button)
             if button == "LeftButton" then
@@ -334,14 +325,14 @@ LittleShop.MINIMAP_BUTTON = {
         end
     },
     dbname = "LittleShopMinimapButton",
-    
+
     -- Initializes the minimap button with LibDBIcon
     -- @param littleshopdependency LittleShop instance (addon singleton)
     -- @return table MINIMAP_BUTTON config (with icon registered)
     GetInstance = function(param)
         local icon = LibStub("LibDBIcon-1.0")
         local minimap_button = LibStub("LibDataBroker-1.1"):NewDataObject(
-            LittleShop.MINIMAP_BUTTON.dbname, 
+            LittleShop.MINIMAP_BUTTON.dbname,
             {
                 type = "data source",
                 text = param.text or LittleShop.MINIMAP_BUTTON.DEFAULT.tooltipText,
@@ -356,27 +347,111 @@ LittleShop.MINIMAP_BUTTON = {
     end
 }
 
+-- ============================================================
+-- Dynamic Frame Management with Metatable
+-- ============================================================
+
+LittleShop.FRAMES = {
+    _frames = {}, -- Internal cache of created frames
+}
+
+-- Metatable for dynamic frame access and creation
+local framesMeta = {
+    -- Dynamic frame access: LittleShop.FRAMES.frame_name creates/retrieves frame
+    __index = function(self, key)
+        -- Avoid recursion for internal methods
+        if key == "_frames" then
+            return rawget(self, "_frames")
+        end
+        
+        -- Check if frame already exists in cache
+        local cached_frame = rawget(self, "_frames")[key]
+        if cached_frame then
+            return cached_frame
+        end
+        
+        -- Check if it's a function call (New, AddFrame, GetFrame, RemoveFrame)
+        local method = rawget(self, key)
+        if type(method) == "function" then
+            return method
+        end
+        return nil -- Return nil for unknown keys
+    end,
+    
+    __tostring = function(self)
+        return "LittleShop.FRAMES (Dynamic Frame Manager)"
+    end
+}
+
+-- Creates a new frame with the given name, parent, and template
+-- @param name string Frame name
+-- @param parent Frame Parent frame (optional)
+-- @param template string Frame template (optional)
+-- @return Frame
+function LittleShop.FRAMES:New(name, parent, template)
+    local frame = CreateFrame("Frame", name, parent or UIParent, template or "BasicFrameTemplate")
+    EnhancedFrame:New(frame) -- Mixin event handling capabilities and store parent reference
+    return frame
+end
+
+-- Creates a new frame and registers it in the frame manager
+-- @param name string Frame name and identifier
+-- @param parent Frame Parent frame (optional)
+-- @param template string Frame template (optional)
+-- @return Frame
+function LittleShop.FRAMES:Add(name, parent, template)
+    local frame = self:New(name, parent, template)
+    self:AddFrame(name, frame)
+    return frame
+end
+
+-- Registers a frame in the frame manager
+-- @param name string Identifier for the frame
+-- @param frame Frame Frame object to register
+-- @return void
+function LittleShop.FRAMES:AddFrame(name, frame)
+    self._frames[name] = frame
+end
+
+-- Retrieves a frame by identifier
+-- @param name string Frame identifier
+-- @return Frame or nil
+function LittleShop.FRAMES:GetFrame(name)
+    return self._frames[name]
+end
+
+-- Removes a frame from the manager
+-- @param name string Frame identifier
+-- @return void
+function LittleShop.FRAMES:RemoveFrame(name)
+    self._frames[name] = nil
+end
+
+setmetatable(LittleShop.FRAMES, framesMeta)
+
 function LittleShop:BuildUI()
     local crafts_provider = self:GetCraftsProvider()
     local order_provider = self:GetOrderProvider()
 
-    -- Create a frame to handle the profile and saved 
-    self.profile_frame = CreateFrame("Frame","LFC_Profile_Frame", UIParent, "BasicFrameTemplate")
-    self.profile_frame.TitleText:SetText("Little Shop - Learned Crafts")
-    self.profile_frame:SetSize(400, 400)
-    self.profile_frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    self.profile_frame:SetMovable(true)
-    self.profile_frame:EnableMouse(true)
-    self.profile_frame:RegisterForDrag("LeftButton")
-    self.profile_frame:SetScript("OnDragStart", self.profile_frame.StartMoving)
-    self.profile_frame:SetScript("OnDragStop", self.profile_frame.StopMovingOrSizing)
-    
-    -- Create content frame inside profile frame for the scrolling list
-    local crafts_frame = CreateFrame("Frame", "LFC_Crafts_Frame", self.profile_frame, "BackdropTemplate")
+    -- ============================================================
+    -- Profile Frame
+    -- ============================================================
+    local profile_frame = self.FRAMES:Add("ProfileFrame", UIParent, "BasicFrameTemplate")
+    profile_frame.TitleText:SetText("Little Shop - Learned Crafts")
+    profile_frame:SetSize(400, 400)
+    profile_frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    profile_frame:SetMovable(true)
+    profile_frame:EnableMouse(true)
+    profile_frame:RegisterForDrag("LeftButton")
+    profile_frame:SetScript("OnDragStart", profile_frame.StartMoving)
+    profile_frame:SetScript("OnDragStop", profile_frame.StopMovingOrSizing)
+
+    -- ============================================================
+    -- Crafts Frame (inside profile_frame)
+    -- ============================================================
+    local crafts_frame = self.FRAMES:Add("CraftsFrame", profile_frame, "BackdropTemplate")
     crafts_frame:SetSize(380, 330)
-    crafts_frame:SetPoint("TOPLEFT", self.profile_frame, "TOPLEFT", 10, -30)
-    
-    -- CRAFTS FRAME BACKDROP
+    crafts_frame:SetPoint("TOPLEFT", profile_frame, "TOPLEFT", 10, -30)
     crafts_frame:SetBackdrop({
         bgFile   = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -385,40 +460,41 @@ function LittleShop:BuildUI()
     })
     crafts_frame:SetBackdropColor(0, 0, 0, 0.5)
     crafts_frame:SetBackdropBorderColor(1, 0.8, 0, 0.5)
-    
+
     -- Element: Scroll Box List for crafts
-    local crafts_scroll_box = CreateFrame("Frame", nil, crafts_frame, "WowScrollBoxList")
+    local crafts_scroll_box = CreateFrame("Frame", "CraftsScrollBox", crafts_frame, "WowScrollBoxList")
     crafts_scroll_box:SetPoint("TOPLEFT", crafts_frame, "TOPLEFT", 4, -10)
     crafts_scroll_box:SetPoint("BOTTOMRIGHT", crafts_frame, "BOTTOMRIGHT", -22, 0)
-    
+
     -- Element: Scroll Bar for crafts
-    local crafts_scroll_bar = CreateFrame("EventFrame", nil, crafts_frame, "MinimalScrollBar")
+    local crafts_scroll_bar = CreateFrame("EventFrame", "CraftsScrollBar", crafts_frame, "MinimalScrollBar")
     crafts_scroll_bar:SetPoint("TOPLEFT", crafts_scroll_box, "TOPRIGHT", 4, 0)
     crafts_scroll_bar:SetPoint("BOTTOMLEFT", crafts_scroll_box, "BOTTOMRIGHT", 4, 10)
-    
+
     -- Element: Scroll Box List View for crafts
     local crafts_item_spacing = 2
-    local crafts_view = CreateScrollBoxListLinearView(crafts_item_spacing, crafts_item_spacing, crafts_item_spacing, crafts_item_spacing, crafts_item_spacing)
+    local crafts_view = CreateScrollBoxListLinearView(crafts_item_spacing, crafts_item_spacing, crafts_item_spacing,
+        crafts_item_spacing, crafts_item_spacing)
     crafts_view:SetElementExtent(20) -- Row height
     crafts_scroll_box:SetView(crafts_view)
     ScrollUtil.InitScrollBoxListWithScrollBar(crafts_scroll_box, crafts_scroll_bar, crafts_view)
-    
+
     -- Item initializer: assign craft data to each row button
     crafts_view:SetElementInitializer("Button", function(button, element)
         if not button.text then
             button.text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
             button.text:SetPoint("LEFT", 10, 0)
-            
+
             local highlight = button:CreateTexture(nil, "HIGHLIGHT")
             highlight:SetAllPoints()
             highlight:SetColorTexture(1, 1, 1, 0.2)
-            
+
             button:SetSize(250, 20)
         end
-        
+
         -- Display craft item link
         button.text:SetText(element.item_link or ("Item ID: " .. tostring(element.item_id)))
-        
+
         button:SetScript("OnClick", function()
             LOGGER.CONSOLE.list({
                 "Craft Details:",
@@ -429,12 +505,12 @@ function LittleShop:BuildUI()
             })
         end)
     end)
-    
+
     -- Create data provider for learned crafts
     for item_id, craft in pairs(self.persistence.learned_crafts) do
         crafts_provider:Insert(craft)
     end
-    
+
     crafts_scroll_box:SetDataProvider(crafts_provider, ScrollBoxConstants.RetainScrollPosition)
     -- Bind provider refresh to persistence changes
     self.persistence.on_crafts_changed = function()
@@ -444,61 +520,66 @@ function LittleShop:BuildUI()
         end
     end
 
+    -- ============================================================
+    -- Main Frame
+    -- ============================================================
+    local main_frame = self.FRAMES:Add("MainFrame", UIParent, "BasicFrameTemplate")
+    main_frame.TitleText:SetText("Little Shop - Your Order Board")
+    main_frame:SetSize(700, 400)
+    main_frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    main_frame:SetMovable(true)
+    main_frame:EnableMouse(true)
+    main_frame:RegisterForDrag("LeftButton")
+    main_frame:SetScript("OnDragStart", main_frame.StartMoving)
+    main_frame:SetScript("OnDragStop", main_frame.StopMovingOrSizing)
 
-    self.main_frame = CreateFrame("Frame", "LFC_Main_Frame", UIParent, "BasicFrameTemplate")
-    self.main_frame.TitleText:SetText("Little Shop - Your Order Board")
-    self.main_frame:SetSize(700, 400)
-    self.main_frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    self.main_frame:SetMovable(true)
-    self.main_frame:EnableMouse(true)
-    self.main_frame:RegisterForDrag("LeftButton")
-    self.main_frame:SetScript("OnDragStart", self.main_frame.StartMoving)
-    self.main_frame:SetScript("OnDragStop", self.main_frame.StopMovingOrSizing)
-
-    self.order_frame = CreateFrame("Frame", "LFC_Order_Frame", self.main_frame, "BackdropTemplate")
-    self.order_frame:SetSize(400, 300)
-    self.order_frame:SetPoint("TOPLEFT", self.main_frame, "TOPLEFT", 10, -30)
-
-    -- ORDERFRAME BACKDROP
-    self.order_frame:SetBackdrop({
+    -- ============================================================
+    -- Order Frame (inside main_frame)
+    -- ============================================================
+    local order_frame = self.FRAMES:Add("OrderFrame", main_frame, "BackdropTemplate")
+    order_frame:SetSize(400, 300)
+    order_frame:SetPoint("TOPLEFT", main_frame, "TOPLEFT", 10, -30)
+    order_frame:SetBackdrop({
         bgFile   = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         edgeSize = 16,
         insets   = { left = 4, right = 4, top = 4, bottom = 4 }
     })
-    self.order_frame:SetBackdropColor(0, 0, 0, 1)
-    self.order_frame:SetBackdropBorderColor(1, 0.8, 0, 1)
+    order_frame:SetBackdropColor(0, 0, 0, 1)
+    order_frame:SetBackdropBorderColor(1, 0.8, 0, 1)
 
-    self.manage_frame = CreateFrame("Frame", "LFC_Manage_Frame", self.main_frame)
+    -- ============================================================
+    -- Manage Frame (inside main_frame)
+    -- ============================================================
+    local manage_frame = self.FRAMES:Add("ManageFrame", main_frame)
+    manage_frame:SetSize(250, 300)
+    manage_frame:SetPoint("TOPRIGHT", main_frame, "TOPRIGHT", -10, -30)
     LOGGER.CONSOLE.info("Creating Manage Frame...")
-    self.manage_frame:SetSize(250, 300)
-    self.manage_frame:SetPoint("TOPRIGHT", self.main_frame, "TOPRIGHT", -10, -30)
 
-    -- Grid of buttons in MANAGEFRAME
+    -- Grid of buttons in manage frame
     local ROWS        = 3
     local COLS        = 3
     local BUTTON_SIZE = 40
     local SPACING     = 10
 
-    -- Create a grid of buttons
     for row = 1, ROWS do
         for col = 1, COLS do
-            local btn = CreateFrame("Button", nil, self.manage_frame, "UIPanelButtonTemplate")
+            local btn = CreateFrame("Button", nil, manage_frame, "UIPanelButtonTemplate")
             btn:SetSize(BUTTON_SIZE, BUTTON_SIZE)
             btn:SetText(row .. "," .. col)
             local xOffset = (col - 1) * (BUTTON_SIZE + SPACING) + SPACING
             local yOffset = -(row - 1) * (BUTTON_SIZE + SPACING) - SPACING
-            btn:SetPoint("TOPLEFT", self.manage_frame, "TOPLEFT", xOffset, yOffset)
+            btn:SetPoint("TOPLEFT", manage_frame, "TOPLEFT", xOffset, yOffset)
         end
     end
 
     -- Element: Scroll Box List
-    local scroll_box = CreateFrame("Frame", nil, self.order_frame, "WowScrollBoxList")
-    scroll_box:SetPoint("TOPLEFT", self.order_frame, "TOPLEFT", 4, -10)
-    scroll_box:SetPoint("BOTTOMRIGHT", self.order_frame, "BOTTOMRIGHT", -22, 0)
+    local scroll_box = CreateFrame("Frame", "OrderScrollBox", orderFrame, "WowScrollBoxList")
+    scroll_box:SetPoint("TOPLEFT", order_frame, "TOPLEFT", 4, -10)
+    scroll_box:SetPoint("BOTTOMRIGHT", order_frame, "BOTTOMRIGHT", -22, 0)
 
     -- Element: Scroll Bar
-    local scroll_bar = CreateFrame("EventFrame", nil, self.order_frame, "MinimalScrollBar")
+    local scroll_bar = CreateFrame("EventFrame", "OrderScrollBar", order_frame, "MinimalScrollBar")
     scroll_bar:SetPoint("TOPLEFT", scroll_box, "TOPRIGHT", 4, 0)
     scroll_bar:SetPoint("BOTTOMLEFT", scroll_box, "BOTTOMRIGHT", 4, 10)
 
@@ -545,6 +626,7 @@ function LittleShop:BuildUI()
     scroll_box:SetDataProvider(order_provider, ScrollBoxConstants.RetainScrollPosition)
 end
 
+-- Program starts here
 local littleshop = LittleShop:New()
 littleshop:BindEvents({
     "PLAYER_LOGIN",
