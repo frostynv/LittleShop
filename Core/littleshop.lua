@@ -4,6 +4,8 @@ local Craft = namespace.require("craft")
 local Character = namespace.require("character")
 local Crafter = namespace.require("crafter")
 local EnhancedFrame = namespace.require("enhancedframe")
+local Event = namespace.require("event")
+local EventSpace = namespace.require("eventspace")
 local Persistence = namespace.require("persistence")
 local WowUtil = namespace.require("wowutil")
 
@@ -43,6 +45,13 @@ function LittleShop:New()
     instance._order_provider = nil
     instance._crafts_provider = nil
     instance.minimap_button = nil
+    
+    -- Event system for decoupled communication between persistence and UI
+    instance.PERSISTENCE_EVENTS = EventSpace:New()
+    
+    -- Register persistence-related events
+    instance.PERSISTENCE_EVENTS:RegisterEvent(Event:New("CRAFTS_CHANGED"))
+    
     return instance
 end
 
@@ -271,6 +280,7 @@ function LittleShop.EVENTS:PLAYER_LOGIN()
     self.current_character = Crafter:New(Character:New(player_name, player_realm, player_guid), nil)
     self:SetCurrentCrafter(self.current_character)
     self.persistence:Initialize()
+    self.persistence:SetEventSpace(self.PERSISTENCE_EVENTS)
     self.persistence:MergeLearnedCrafts(self:ScanCraftableItems())
     self.is_active = true
 
@@ -328,7 +338,7 @@ LittleShop.MINIMAP_BUTTON = {
 
     -- Initializes the minimap button with LibDBIcon
     -- @param littleshopdependency LittleShop instance (addon singleton)
-    -- @return table MINIMAP_BUTTON config (with icon registered)
+    -- @return table Icon instance (for show/hide control)
     GetInstance = function(param)
         local icon = LibStub("LibDBIcon-1.0")
         local minimap_button = LibStub("LibDataBroker-1.1"):NewDataObject(
@@ -343,7 +353,7 @@ LittleShop.MINIMAP_BUTTON = {
         -- Use DEFAULT_PROFILE.minimap as fallback if persistence not yet initialized
         -- (persistence initializes on PLAYER_LOGIN, but this is called at New())
         icon:Register("LittleShop", minimap_button, param.config or LittleShop.MINIMAP_BUTTON.DEFAULT)
-        return LittleShop.MINIMAP_BUTTON
+        return icon
     end
 }
 
@@ -512,13 +522,14 @@ function LittleShop:BuildUI()
     end
 
     crafts_scroll_box:SetDataProvider(crafts_provider, ScrollBoxConstants.RetainScrollPosition)
-    -- Bind provider refresh to persistence changes
-    self.persistence.on_crafts_changed = function()
+    
+    -- Subscribe crafts_frame to persistence changes via EventSpace
+    crafts_frame:On(self.PERSISTENCE_EVENTS, "CRAFTS_CHANGED", function()
         crafts_provider:Flush()
         for item_id, craft in pairs(self.persistence.learned_crafts) do
             crafts_provider:Insert(craft)
         end
-    end
+    end)
 
     -- ============================================================
     -- Main Frame

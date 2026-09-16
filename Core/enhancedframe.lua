@@ -17,20 +17,17 @@ local namespace = select(2, ...) -- Get the namespace table from the addon
 -- ============================================================
 -- @type Event
 -- @field name       string Event identifier (e.g., "CRAFT_LEARNED")
--- @field callback   function Default callback triggered when event fires
--- Encapsulates a single event with name and optional callback
+-- Encapsulates a single event with name
 Event = {}
 Event.__index = Event
 namespace.export("event", Event) -- Export to the LittleShop addon instance
 
 -- Creates a new Event instance
 -- @param name string Event identifier
--- @param callback function Optional default callback to trigger
 -- @return Event
-function Event:New(name, callback)
+function Event:New(name)
     local instance = setmetatable({}, Event)
     instance.name = name
-    instance.callback = callback
     return instance
 end
 
@@ -60,11 +57,10 @@ namespace.export("eventspace", EventSpace) -- Export to the LittleShop addon ins
 -- @return EventSpace
 function EventSpace:New()
     local instance = setmetatable({}, EventSpace)
-    CreateFromMixins(instance, CallbackRegistryMixin)
+    Mixin(instance, CallbackRegistryMixin)
+    instance:OnLoad() -- initializes internal CallbackRegistryMixin state (executingEvents, etc.)
     instance.events = {
-        ["META_INFO"] = Event:New("META_INFO", function()
-            LOGGER.CONSOLE.print("EventSpace: GET_INFO event triggered")
-        end)
+        ["META_INFO"] = Event:New("META_INFO")
     }
     return instance
 end
@@ -75,18 +71,26 @@ end
 
 -- Registers a listener callback for a specific event
 -- Multiple callbacks can listen to the same event
--- @param event string Event name to listen for
+-- @param event_name string Event name to listen for
 -- @param callback function Called when event is fired: callback(...)
 -- @return void
-function EventSpace:RegisterListener(event, callback)
-    self:RegisterCallback(event.name, callback)
+function EventSpace:RegisterListener(event_name, callback)
+    if not self.events[event_name] then
+        LOGGER.CONSOLE.warn("EventSpace:RegisterListener - Event not registered: " .. event_name)
+        return
+    end
+    self:RegisterCallback(event_name, callback)
 end
 
 -- Unregisters all listeners for a specific event
--- @param event string Event name to stop listening for
+-- @param event_name string Event name to stop listening for
 -- @return void
-function EventSpace:UnregisterListener(event)
-    self:UnregisterCallback(event.name)
+function EventSpace:UnregisterListener(event_name)
+    if not self.events[event_name] then
+        LOGGER.CONSOLE.warn("EventSpace:UnregisterListener - Event not registered: " .. event_name)
+        return
+    end
+    self:UnregisterCallback(event_name)
 end
 
 -- ============================================================
@@ -98,7 +102,7 @@ end
 -- @param event Event Event instance to register
 -- @return void
 function EventSpace:RegisterEvent(event)
-    self:GenerateCallbackEvents(event)
+    self:GenerateCallbackEvents({ event.name }) -- expects an array of event name strings
     self.events[event.name] = event
 end
 
@@ -106,20 +110,21 @@ end
 -- @param event Event Event instance to unregister
 -- @return void
 function EventSpace:UnregisterEvent(event)
-    self:UnregisterCallbackEvents(event)
+    self:UnregisterCallbackEvents({ event.name })
     self.events[event.name] = nil
 end
 
 -- Fires an event, triggering all registered listeners
--- Calls both the event's default callback and registered listeners
--- @param event string or Event Event name or Event object to fire
+-- @param event_name string Event name to fire
 -- @param ... any Arguments passed to all listeners
 -- @return void
-function EventSpace:ThrowEvent(event, ...)
-    if self.events[event] then
-        self.events[event].callback(...)
+function EventSpace:ThrowEvent(event_name, ...)
+    if not self.events[event_name] then
+        LOGGER.CONSOLE.warn("EventSpace:ThrowEvent - Event not registered: " .. event_name)
+        return
     end
-    self:TriggerEvent(event.name, ...)
+    -- Trigger all registered listeners
+    self:TriggerEvent(event_name, ...)
 end
 
 -- ============================================================

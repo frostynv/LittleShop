@@ -1,9 +1,11 @@
 local namespace = select(2, ...) -- Get the namespace table from the addon
 local Order = namespace.require("order")
 local Craft = namespace.require("craft")
+local Event = namespace.require("event")
 
 -- ============================================================
 -- Persistence Class
+-- @note Decoupling persistence from orchestration, and provide a central hub for similar data (orders, crafts, crafters), allowing all data stored within the same scope level
 -- ============================================================
 -- @type Persistence
 -- @field learned_crafts table    Map of item_id -> Craft object for learned recipes
@@ -42,6 +44,7 @@ function Persistence:New()
 	instance.learned_crafts = {}   -- Map of learned items keyed by itemID: itemID -> craft object
 	instance.orders = {}
 	instance.profile_settings = {} -- Profile settings for the addon, can be expanded in the future
+	instance.event_space = nil     -- EventSpace for pub-sub events (set later via SetEventSpace)
 	return instance
 end
 
@@ -75,6 +78,13 @@ function Persistence:CurrentProfile()
 	return self.profile_settings
 end
 
+-- Sets the EventSpace for firing persistence change events
+-- @param event_space EventSpace Event space for pub-sub communication
+-- @return void
+function Persistence:SetEventSpace(event_space)
+	self.event_space = event_space
+end
+
 function Persistence:AddOrder(order)
 	self.orders[order.unique_id] = order
 end
@@ -94,8 +104,8 @@ end
 -- Learned Crafts Management
 function Persistence:AddCraftableItem(craft)
 	self.learned_crafts[craft.item_id] = craft
-	if self.on_crafts_changed then
-		self.on_crafts_changed()
+	if self.event_space then
+		self.event_space:ThrowEvent("CRAFTS_CHANGED")
 	end
 end
 
@@ -139,8 +149,8 @@ function Persistence:MergeLearnedCrafts(new_crafts)
 			self.learned_crafts[item_id] = new_craft
 		end
 	end
-	if self.on_crafts_changed then
-		self.on_crafts_changed()
+	if self.event_space then
+		self.event_space:ThrowEvent("CRAFTS_CHANGED")
 	end
 	LOGGER.CONSOLE.info("In total " .. self:CraftableItemCountSize() .. " craft in persistence.")
 end

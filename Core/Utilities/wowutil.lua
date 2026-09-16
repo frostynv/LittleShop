@@ -1,3 +1,10 @@
+-- ======
+-- Helper functions that utilize the WOW API,
+-- @module
+-- @note Avoid calling the same API at multiple locations, causing costly refactoring if the API changes (which it does)
+-- ====
+
+
 local namespace = select(2, ...) -- Get the namespace table from the addon
 local WowUtil = {}
 WowUtil.__index = WowUtil
